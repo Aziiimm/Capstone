@@ -4,6 +4,9 @@ dask[complete]>=2024.1.0
 pyarrow>=14.0.0
 pandas>=2.0.0
 
+# Download from Hugging Face (optional, for download script)
+huggingface_hub>=0.20.0
+
 # Tests
 pytest>=7.0.0
 
