@@ -121,3 +121,8 @@ Capstone/
 ## Citation
 
 [McAuley-Lab/Amazon-Reviews-2023](https://huggingface.co/datasets/McAuley-Lab/Amazon-Reviews-2023)
+
+## GPU path
+```bash
+python -m data.run_pipeline --source dataset/Tools_and_Home_Improvement.jsonl --meta dataset/meta_Tools_and_Home_Improvement.jsonl --output output/sample.parquet --limit 50000 --gpu --timings-file output/timings.sample.json
+```

@@ -13,6 +13,13 @@ from data.load import load
 from data.filter import filter_counts
 from data.to_parquet import to_parquet
 
+try:
+    from dask_cuda import LocalCUDACluster
+    from dask.distributed import Client
+    HAS_DASK_CUDA = True
+except ImportError:
+    HAS_DASK_CUDA = False
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(
@@ -46,8 +53,8 @@ def main() -> None:
     )
     parser.add_argument(
         "--blocksize",
-        default="64MB",
-        help="Dask read block size (default 64MB)",
+        default="128MB",
+        help="Dask read block size (default 128MB)",
     )
     parser.add_argument(
         "--timings-file",
@@ -60,6 +67,15 @@ def main() -> None:
     backend = "gpu" if args.gpu else "cpu"
     timings: dict[str, float] = {}
 
+    client = None
+    if args.gpu and HAS_DASK_CUDA:
+        cluster = LocalCUDACluster(device_memory_limit="7GB")
+        client = Client(cluster)
+        import dask
+        dask.config.set({"dataframe.shuffle.method": "tasks"})
+        print("🚀 GPU Cluster started on RTX 3060 Ti")
+        
+
     t0 = time.perf_counter()
     print("Loading...")
     ddf = load(
@@ -69,8 +85,6 @@ def main() -> None:
         use_gpu=args.gpu,
         blocksize=args.blocksize,
     )
-    timings["load_s"] = time.perf_counter() - t0
-    print(f"  Load: {timings['load_s']:.2f}s")
 
     t0 = time.perf_counter()
     print("Filtering (user >= 6 reviews, item >= 11 reviews)...")
@@ -99,6 +113,9 @@ def main() -> None:
         with open(args.timings_file, "w") as f:
             json.dump(out, f, indent=2)
         print(f"Timings written to {args.timings_file}")
+    
+    if client:
+        client.close()
 
 
 if __name__ == "__main__":

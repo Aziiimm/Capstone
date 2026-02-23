@@ -9,3 +9,8 @@ pytest>=7.0.0
 
 # GPU path (optional): only if you run the GPU pipeline (e.g. Electronics/Industrial GPU)
 # pip install cudf-cu12 dask-cudf-cu12  # or match your CUDA version
+cudf-cu12==24.02.*
+dask-cudf-cu12==24.02.*
+cuml-cu12==24.02.*
+torch --index-url https://download.pytorch.org/whl/cu124
+torchvision --index-url https://download.pytorch.org/whl/cu124

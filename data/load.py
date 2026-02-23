@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import os
 from typing import Union
-
 import pandas as pd
 
 try:
@@ -20,15 +19,11 @@ except ImportError:
 
 import dask.dataframe as dd
 
-
-# Core columns required for filter and downstream
+# Schema configuration
 CORE_COLUMNS = ["reviewerID", "asin", "rating", "reviewText", "timestamp"]
-# Meta columns added when --meta file is provided (join with item metadata)
 META_COLUMNS = ["product_title", "main_category"]
-REQUIRED_COLUMNS = CORE_COLUMNS  # filter expects at least these
 OUTPUT_COLUMNS_JOINED = CORE_COLUMNS + META_COLUMNS
 
-# UCSD/Hugging Face raw review fields -> our schema
 REVIEW_COLUMN_MAP = {
     "user_id": "reviewerID",
     "text": "reviewText",
@@ -36,88 +31,105 @@ REVIEW_COLUMN_MAP = {
     "rating": "rating",
     "timestamp": "timestamp",
 }
-# Raw meta fields -> our schema (only those we keep)
-META_COLUMN_MAP = {
-    "title": "product_title",
-    "main_category": "main_category",
-}
 JOIN_KEY = "parent_asin"
 
-
-def _load_review(path: str, blocksize: str) -> dd.DataFrame:
-    """Load review JSONL; return Dask DataFrame with core columns + parent_asin for join."""
-    if not os.path.isfile(path):
-        raise FileNotFoundError(
-            f"Review file not found: {path}. "
-            "Download from the UCSD datarepo (see README)."
+def _load_review(path: str, blocksize: str, use_gpu: bool = False) -> Union[dd.DataFrame, dask_cudf.DataFrame]:
+    """Load review JSONL natively on GPU if use_gpu is True."""
+    if use_gpu and HAS_CUDF:
+        dtype_map = {
+            "user_id": "str", 
+            "asin": "str", 
+            "text": "str", 
+            "rating": "float32"
+        }
+        
+        ddf = dask_cudf.read_json(
+            path, 
+            lines=True, 
+            blocksize=blocksize,
+            compression=None,
+            dtype=dtype_map 
         )
-    ddf = dd.read_json(path, lines=True, blocksize=blocksize)
-    # Map raw names to our schema
-    rename = {k: v for k, v in REVIEW_COLUMN_MAP.items() if k in ddf.columns}
-    ddf = ddf.rename(columns=rename)
-    # We need parent_asin for join; keep it until after join
-    need = [c for c in CORE_COLUMNS if c in ddf.columns] + [JOIN_KEY]
-    missing = [c for c in CORE_COLUMNS if c not in ddf.columns]
-    if missing:
-        raise ValueError(
-            f"Review file missing columns {missing}. Expected after mapping: {CORE_COLUMNS}. "
-            f"File has: {list(ddf.columns)}"
-        )
-    # Ensure parent_asin exists (required for join)
-    if JOIN_KEY not in ddf.columns and "parent_asin" in ddf.columns:
-        pass  # already there with raw name
-    elif "parent_asin" in ddf.columns and JOIN_KEY not in ddf.columns:
-        ddf = ddf.rename(columns={"parent_asin": JOIN_KEY})
     else:
-        # Fallback: use asin as parent_asin if dataset has no parent_asin
-        if JOIN_KEY not in ddf.columns:
-            ddf = ddf.assign(**{JOIN_KEY: ddf["asin"]})
-    return ddf[[c for c in ddf.columns if c in CORE_COLUMNS + [JOIN_KEY]]]
+        # Standard CPU path
+        ddf = dd.read_json(path, lines=True, blocksize=blocksize)
 
+    # 1. Rename columns immediately
+    ddf = ddf.rename(columns=REVIEW_COLUMN_MAP)
+    
+    # 2. Ensure JOIN_KEY exists (mapping asin to parent_asin if needed)
+    if JOIN_KEY not in ddf.columns and "asin" in ddf.columns:
+        ddf = ddf.assign(**{JOIN_KEY: ddf["asin"]})
+        
+    # 3. Strictly filter to only the columns that the rest of your pipeline expects
+    valid_cols = [c for c in CORE_COLUMNS + [JOIN_KEY] if c in ddf.columns]
+    return ddf[valid_cols]
 
-def _load_meta(path: str, blocksize: str) -> dd.DataFrame:
-    """Load item metadata JSONL; return Dask DataFrame with parent_asin + product_title, main_category.
-    Load with pandas (meta files are smaller) to avoid Dask partition schema drift (price, author, etc.)."""
+def _load_meta(path: str, use_gpu: bool = False) -> Union[dd.DataFrame, dask_cudf.DataFrame]:
+    """Load metadata on GPU with explicit string dtypes to prevent schema mismatches."""
     if not os.path.isfile(path):
-        raise FileNotFoundError(
-            f"Meta file not found: {path}. "
-            "Download from the UCSD datarepo (see README)."
+        raise FileNotFoundError(f"Meta file not found: {path}")
+
+    if use_gpu and HAS_CUDF:
+        messy_columns = {
+            "author": "object", 
+            "details": "object", 
+            "images": "object", 
+            "video_360": "object",
+            "price": "object",  
+            "videos": "object",  
+            "feature": "object",
+            "description": "object"
+        }
+        
+        # We use dask_cudf.read_json directly for partitioned loading
+        df = dask_cudf.read_json(
+            path, 
+            lines=True, 
+            blocksize="128MB", 
+            dtype=messy_columns,
+            compression=None
         )
-    pdf = pd.read_json(path, lines=True)
-    rename = {"title": "product_title", "main_category": "main_category"}
-    if "parent_asin" in pdf.columns:
-        pdf = pdf.rename(columns={"parent_asin": JOIN_KEY})
-    for raw, out in rename.items():
-        if raw in pdf.columns:
-            pdf = pdf.rename(columns={raw: out})
-    keep = [c for c in [JOIN_KEY, "product_title", "main_category"] if c in pdf.columns]
-    if JOIN_KEY not in keep:
-        raise ValueError(f"Meta file missing '{JOIN_KEY}'. Has: {list(pdf.columns)}")
-    pdf = pdf[keep].drop_duplicates(subset=[JOIN_KEY])
-    pdf[JOIN_KEY] = pdf[JOIN_KEY].astype(str)
-    return dd.from_pandas(pdf, npartitions=1)
+    else:
+        # Standard CPU path consistency
+        df = dd.read_json(path, lines=True, blocksize="128MB")
 
+    # Standardize the Join Key
+    if "parent_asin" in df.columns:
+        df = df.rename(columns={"parent_asin": JOIN_KEY})
+    
+    # Rename and Filter to only the 3 columns we actually need
+    df = df.rename(columns={"title": "product_title", "main_category": "main_category"})
+    keep_cols = [c for c in [JOIN_KEY, "product_title", "main_category"] if c in df.columns]
+    
+    # Drop junk columns IMMEDIATELY to free up VRAM on your 3060 Ti
+    df = df[keep_cols]
+    
+    # Final cleanup logic
+    df = df.drop_duplicates(subset=[JOIN_KEY])
+    df[JOIN_KEY] = df[JOIN_KEY].astype(str)
 
-def _join_partition_keep_columns(part: pd.DataFrame, out_cols: list[str]) -> pd.DataFrame:
-    """Keep only output columns; force clean schema to avoid metadata mismatch."""
-    keep = [c for c in out_cols if c in part.columns]
-    return part[keep].copy()
+    return df
 
-
-def _join_review_meta(
-    ddf_review: dd.DataFrame,
-    ddf_meta: dd.DataFrame,
-) -> dd.DataFrame:
-    """Left-join review with meta on parent_asin; return DataFrame with OUTPUT_COLUMNS_JOINED."""
-    # Cast join key to string on both sides to avoid dtype mismatch
+def _join_review_meta(ddf_review: dd.DataFrame, ddf_meta: dd.DataFrame) -> dd.DataFrame:
+    """Perform GPU-accelerated merge."""
     ddf_review = ddf_review.assign(**{JOIN_KEY: ddf_review[JOIN_KEY].astype(str)})
     ddf_meta = ddf_meta.assign(**{JOIN_KEY: ddf_meta[JOIN_KEY].astype(str)})
+    
+    # Left merge: keep all reviews, add meta info where available
     merged = ddf_review.merge(ddf_meta, on=JOIN_KEY, how="left")
-    out_cols = [c for c in OUTPUT_COLUMNS_JOINED if c in merged.columns]
-    # map_partitions forces clean schema (drops author, price, etc. that may leak from merge)
-    meta = pd.DataFrame(columns=out_cols)
-    return merged.map_partitions(_join_partition_keep_columns, out_cols=out_cols, meta=meta)
+    
+    # Ensure reviewerID and asin are definitely kept for filtering
+    required_cols = ["reviewerID", "asin", "rating", "reviewText", "timestamp", "product_title", "main_category"]
+    out_cols = [c for c in required_cols if c in merged.columns]
 
+    # Maintain GPU-native structure
+    if HAS_CUDF and isinstance(merged, dask_cudf.DataFrame):
+        meta = cudf.DataFrame(columns=out_cols)
+    else:
+        meta = pd.DataFrame(columns=out_cols)
+
+    return merged.map_partitions(lambda part: part[out_cols].copy(), meta=merged._meta[out_cols])
 
 def load_from_local(
     path: str,
@@ -125,32 +137,22 @@ def load_from_local(
     limit: int | None = None,
     use_gpu: bool = False,
     blocksize: str = "64MB",
-) -> Union[dd.DataFrame, "dask_cudf.DataFrame"]:
-    """
-    Load from local JSONL/JSONL.GZ.
-    - If meta_path is None: return only core columns (reviewerID, asin, rating, reviewText, timestamp).
-    - If meta_path is set: load both, join on parent_asin, return core + product_title, main_category.
-    """
+) -> Union[dd.DataFrame, dask_cudf.DataFrame]:
+    
     if use_gpu and not HAS_CUDF:
         use_gpu = False
 
-    if meta_path is None:
-        # Single-file path (reviews only)
-        ddf = _load_review(path, blocksize)
-        ddf = ddf[CORE_COLUMNS]
-    else:
-        ddf_review = _load_review(path, blocksize)
-        ddf_meta = _load_meta(meta_path, blocksize)
+    # Load reviews (and meta if provided)
+    ddf_review = _load_review(path, blocksize, use_gpu=use_gpu)
+    
+    if meta_path:
+        ddf_meta = _load_meta(meta_path, use_gpu=use_gpu)
         ddf = _join_review_meta(ddf_review, ddf_meta)
+    else:
+        ddf = ddf_review[CORE_COLUMNS]
 
     if limit is not None:
-        ddf = ddf.head(limit, npartitions=-1)
-
-    if use_gpu and HAS_CUDF:
-        def _to_cudf(part: pd.DataFrame) -> "cudf.DataFrame":
-            return cudf.from_pandas(part)
-        meta = cudf.DataFrame(columns=ddf.columns)
-        return ddf.map_partitions(_to_cudf, meta=meta)
+        ddf = ddf.head(limit)
 
     return ddf
 
