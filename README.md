@@ -120,49 +120,60 @@ Capstone/
 
 ---
 
-## Multi-category GPU pipeline (server runs)
+## Multi-category pipeline (CPU vs GPU, server runs)
 
-For running several Amazon Review categories **sequentially** on the GPU server (with automatic cleanup), use `data/run_multi_categories.py`.
+For running several Amazon Review categories **sequentially** on the server (with automatic cleanup), use `data/run_multi_categories.py`.
+
+- **CPU baseline (your part)**: **omit** `--gpu`.
+- **GPU comparison (CUDA/RAPIDS)**: **include** `--gpu`.
 
 ### 1. Configure categories
 
-Categories are defined in `categories.json` at the repo root. Example:
+Categories are defined in `categories.json` at the repo root. Example (using plain `.jsonl` files):
 
 ```json
 {
   "categories": [
     {
       "name": "Electronics",
-      "review_file": "Electronics.jsonl.gz",
-      "meta_file": "meta_Electronics.jsonl.gz"
+      "review_file": "Electronics.jsonl",
+      "meta_file": "meta_Electronics.jsonl"
     },
     {
       "name": "Tools_and_Home_Improvement",
-      "review_file": "Tools_and_Home_Improvement.jsonl.gz",
-      "meta_file": "meta_Tools_and_Home_Improvement.jsonl.gz"
+      "review_file": "Tools_and_Home_Improvement.jsonl",
+      "meta_file": "meta_Tools_and_Home_Improvement.jsonl"
     },
     {
       "name": "Industrial_and_Scientific",
-      "review_file": "Industrial_and_Scientific.jsonl.gz",
-      "meta_file": "meta_Industrial_and_Scientific.jsonl.gz"
+      "review_file": "Industrial_and_Scientific.jsonl",
+      "meta_file": "meta_Industrial_and_Scientific.jsonl"
     }
   ]
 }
 ```
 
 - **name**: Logical name for logging and output filenames.
-- **review_file**: Review JSONL/JSONL.GZ file in `dataset/` (e.g. `Electronics.jsonl.gz`).
-- **meta_file**: Meta JSONL/JSONL.GZ file in `dataset/` (e.g. `meta_Electronics.jsonl.gz`).
+- **review_file**: Review JSONL/JSONL.GZ file in `dataset/` (e.g. `Electronics.jsonl` or `Electronics.jsonl.gz`).
+- **meta_file**: Meta JSONL/JSONL.GZ file in `dataset/` (e.g. `meta_Electronics.jsonl` or `meta_Electronics.jsonl.gz`).
 
 All files listed here should be **pre-downloaded** into the `dataset/` directory on the GPU server.
 
 ### 2. Run the multi-category script
 
-From the repo root on the GPU server:
+From the repo root on the server:
 
-```bash
-python -m data.run_multi_categories --config categories.json --gpu --output-dir output
-```
+- **CPU baseline run (no GPU, your part):**
+
+  ```bash
+  python -m data.run_multi_categories --config categories.json --output-dir output
+  ```
+
+- **GPU run (CUDA/RAPIDS comparison):**
+
+  ```bash
+  python -m data.run_multi_categories --config categories.json --gpu --output-dir output
+  ```
 
 Useful flags:
 
