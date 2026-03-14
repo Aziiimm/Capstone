@@ -1,0 +1,17 @@
+2026-03-14 13:54:31 | INFO | multi_categories | Logging initialized. Log file: logs\multi_run_20260314_135431.log
+2026-03-14 13:54:31 | INFO | multi_categories | Multi-category run started with config=categories.json
+2026-03-14 13:54:31 | INFO | multi_categories | === Starting category: Electronics ===
+2026-03-14 13:54:31 | ERROR | multi_categories | Category Electronics FAILED: Review file not found for Electronics: dataset\Electronics.jsonl.gz
+Traceback (most recent call last):
+  File "C:\Users\azimr\Desktop\Capstone\data\run_multi_categories.py", line 288, in main
+    result = run_category(
+        cat,
+    ...<5 lines>...
+        logger=logger,
+    )
+  File "C:\Users\azimr\Desktop\Capstone\data\run_multi_categories.py", line 123, in run_category
+    raise FileNotFoundError(f"Review file not found for {name}: {review_path}")
+FileNotFoundError: Review file not found for Electronics: dataset\Electronics.jsonl.gz
+2026-03-14 13:54:31 | ERROR | multi_categories | Aborting multi-run due to failure and --continue-on-error not set.
+2026-03-14 13:54:31 | INFO | multi_categories | Multi-run summary written to output\timings_multi_summary.json
+2026-03-14 13:54:31 | ERROR | multi_categories | Multi-category run completed with failures.

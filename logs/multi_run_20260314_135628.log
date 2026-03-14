@@ -1,0 +1,4 @@
+2026-03-14 13:56:28 | INFO | multi_categories | Logging initialized. Log file: logs\multi_run_20260314_135628.log
+2026-03-14 13:56:28 | INFO | multi_categories | Multi-category run started with config=categories.json
+2026-03-14 13:56:28 | INFO | multi_categories | === Starting category: Electronics ===
+2026-03-14 13:56:28 | INFO | multi_categories | Category Electronics: review=dataset\Electronics.jsonl meta=dataset\meta_Electronics.jsonl output_parquet=output\dev_Electronics.parquet

@@ -2,18 +2,18 @@
   "categories": [
     {
       "name": "Electronics",
-      "review_file": "Electronics.jsonl.gz",
-      "meta_file": "meta_Electronics.jsonl.gz"
+      "review_file": "Electronics.jsonl",
+      "meta_file": "meta_Electronics.jsonl"
     },
     {
       "name": "Tools_and_Home_Improvement",
-      "review_file": "Tools_and_Home_Improvement.jsonl.gz",
-      "meta_file": "meta_Tools_and_Home_Improvement.jsonl.gz"
+      "review_file": "Tools_and_Home_Improvement.jsonl",
+      "meta_file": "meta_Tools_and_Home_Improvement.jsonl"
     },
     {
       "name": "Industrial_and_Scientific",
-      "review_file": "Industrial_and_Scientific.jsonl.gz",
-      "meta_file": "meta_Industrial_and_Scientific.jsonl.gz"
+      "review_file": "Industrial_and_Scientific.jsonl",
+      "meta_file": "meta_Industrial_and_Scientific.jsonl"
     },
     {
       "name": "Sports_and_Outdoors",
