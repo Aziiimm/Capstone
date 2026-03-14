@@ -109,12 +109,124 @@ Capstone/
     load.py         # Load review + meta, join, prune
     filter.py       # User ≥6, item ≥11 reviews
     to_parquet.py   # Write Parquet
-    run_pipeline.py # CLI entry point
+    run_pipeline.py         # Single-category CLI entry point
+    run_multi_categories.py # Multi-category orchestrator (server runs)
   dataset/          # Put your .jsonl or .jsonl.gz files here
   output/           # Parquet output
+  logs/             # Multi-category run logs
   tests/
   requirements.txt
 ```
+
+---
+
+## Multi-category GPU pipeline (server runs)
+
+For running several Amazon Review categories **sequentially** on the GPU server (with automatic cleanup), use `data/run_multi_categories.py`.
+
+### 1. Configure categories
+
+Categories are defined in `categories.json` at the repo root. Example:
+
+```json
+{
+  "categories": [
+    {
+      "name": "Electronics",
+      "review_file": "Electronics.jsonl.gz",
+      "meta_file": "meta_Electronics.jsonl.gz"
+    },
+    {
+      "name": "Tools_and_Home_Improvement",
+      "review_file": "Tools_and_Home_Improvement.jsonl.gz",
+      "meta_file": "meta_Tools_and_Home_Improvement.jsonl.gz"
+    },
+    {
+      "name": "Industrial_and_Scientific",
+      "review_file": "Industrial_and_Scientific.jsonl.gz",
+      "meta_file": "meta_Industrial_and_Scientific.jsonl.gz"
+    }
+  ]
+}
+```
+
+- **name**: Logical name for logging and output filenames.
+- **review_file**: Review JSONL/JSONL.GZ file in `dataset/` (e.g. `Electronics.jsonl.gz`).
+- **meta_file**: Meta JSONL/JSONL.GZ file in `dataset/` (e.g. `meta_Electronics.jsonl.gz`).
+
+All files listed here should be **pre-downloaded** into the `dataset/` directory on the GPU server.
+
+### 2. Run the multi-category script
+
+From the repo root on the GPU server:
+
+```bash
+python -m data.run_multi_categories --config categories.json --gpu --output-dir output
+```
+
+Useful flags:
+
+- `--gpu`: Use the GPU pipeline (Dask-cuDF) if available.
+- `--limit N`: Limit rows per category (for quick tests).
+- `--blocksize SIZE`: Dask read block size (default `64MB`).
+- `--output-dir DIR`: Base directory for Parquet and per-category timings (default `output/`).
+- `--summary-timings PATH`: Optional path for an aggregated summary JSON (default `output/timings_multi_summary.json`).
+- `--continue-on-error`: Continue with remaining categories even if one fails.
+- `--no-delete-inputs`: Do **not** delete the input `.jsonl` files after a successful category (useful for debugging).
+
+### 3. Outputs, timings, and logging
+
+For each category `<CATEGORY>` (derived from `name` in `categories.json` with spaces replaced by underscores), the script writes:
+
+- Parquet: `output/dev_<CATEGORY>.parquet`
+- Per-category timings: `output/timings_<CATEGORY>.json`
+
+It also writes an overall summary file (by default):
+
+- `output/timings_multi_summary.json`
+
+This JSON includes:
+
+- Backend (`cpu`/`gpu`)
+- Absolute paths for `config` and `output_dir`
+- Flags (`delete_inputs`, `continue_on_error`)
+- A `categories` list with per-category status, timings, and paths
+
+### 4. Automatic cleanup of JSONL inputs
+
+By default, after a category finishes **successfully**, the script will:
+
+- Delete that category’s review JSONL/JSONL.GZ file from `dataset/`
+- Delete that category’s meta JSONL/JSONL.GZ file from `dataset/`
+
+This helps keep storage usage low on the professor’s GPU server.
+
+Safety details:
+
+- Only files under the `dataset/` directory are eligible for deletion.
+- Files are deleted **after** the Parquet file and per-category timings JSON have been written.
+- If a category fails, its input files are **not** deleted.
+- Use `--no-delete-inputs` to disable this behavior (e.g., for debugging or when you do not want cleanup).
+
+### 5. Logs vs timings
+
+In addition to timings JSON files, the multi-category run writes detailed logs to:
+
+- `logs/multi_run_<YYYYMMDD_HHMMSS>.log`
+
+Logging includes:
+
+- Start/end of the overall multi-category run
+- Start/end of each category
+- Input/output paths used
+- Per-stage timings (load, filter, to_parquet)
+- Exceptions and stack traces on failure
+- File deletions and any deletion errors
+
+Logs are written to **both**:
+
+- Console/stdout (so you can tail the run interactively)
+- The log file in `logs/` (for later inspection or sharing)
 
 ---
 
