@@ -1,6 +1,6 @@
 """
 Orchestrator: load -> filter -> to_parquet.
-Updated to allocate 7GB of VRAM for the RMM pool.
+Updated to utilize LocalCUDACluster for distributed multi-GPU processing.
 """
 from __future__ import annotations
 
@@ -9,16 +9,32 @@ import json
 import os
 import time
 
-# RAPIDS imports for memory management
+# Distributed GPU imports
 try:
-    import rmm
-    HAS_RMM = True
+    from dask_cuda import LocalCUDACluster
+    from dask.distributed import Client
+    HAS_DASK_CUDA = True
 except ImportError:
-    HAS_RMM = False
+    HAS_DASK_CUDA = False
 
 from data.load import load
 from data.filter import filter_counts
 from data.to_parquet import to_parquet
+
+def setup_cluster():
+    """
+    Initializes a multi-GPU cluster.
+    Allocates a 7GB RMM pool per GPU to prevent OOM errors.
+    """
+    print("Initializing LocalCUDACluster...")
+    cluster = LocalCUDACluster(
+        rmm_pool_size="7GB",       # Allocates 7GB per GPU worker
+        device_memory_limit="15GB" # Prevents spilling out of physical VRAM
+    )
+    client = Client(cluster)
+    print(f"Cluster active! Dashboard link: {client.dashboard_link}")
+    print(f"Workers (GPUs) connected: {len(client.scheduler_info()['workers'])}")
+    return client
 
 def main() -> None:
     parser = argparse.ArgumentParser(
@@ -33,15 +49,17 @@ def main() -> None:
     parser.add_argument("--timings-file", default=None)
     args = parser.parse_args()
 
-    if args.gpu and HAS_RMM:
-        rmm.reinitialize(
-            pool_allocator=True,
-            initial_pool_size=int(7e9),  # <-- THIS IS THE 7GB FIX
-            managed_memory=True,
-        )
+    client = None
+    if args.gpu:
+        if HAS_DASK_CUDA:
+            client = setup_cluster()
+        else:
+            print("WARNING: dask_cuda not found. Running on single GPU/CPU without distributed cluster.")
 
     os.makedirs(os.path.dirname(args.output) or ".", exist_ok=True)
-    backend = "gpu" if args.gpu else "cpu"
+    
+    # Update backend label for benchmarking
+    backend = "gpu-cluster" if (args.gpu and HAS_DASK_CUDA) else ("gpu" if args.gpu else "cpu")
     timings: dict[str, float] = {}
 
     # Stage 1: Load
@@ -77,6 +95,11 @@ def main() -> None:
     if args.timings_file:
         with open(args.timings_file, "w") as f:
             json.dump({"backend": backend, "timings_s": timings}, f, indent=2)
+
+    # Clean up cluster connection to free up the GPUs
+    if client:
+        print("Shutting down cluster workers...")
+        client.close()
 
 if __name__ == "__main__":
     main()
