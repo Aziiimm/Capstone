@@ -1,11 +1,12 @@
 """
 Multi-category orchestrator: run load -> filter -> to_parquet sequentially for multiple
-Amazon Review categories, with logging, per-category timings, optional summary, and
-automatic cleanup of input JSONL files on success.
+Amazon Review categories, with logging, per-category timings, and optional summary.
+Input files in the dataset directory are deleted only after ALL categories complete successfully.
 """
 from __future__ import annotations
 
 import argparse
+import dask
 import json
 import logging
 import os
@@ -17,7 +18,7 @@ from data.filter import filter_counts
 from data.to_parquet import to_parquet
 
 
-LOGGER_NAME = "multi_categories"
+LOGGER_NAME = "multi_categories_safe"
 DEFAULT_CONFIG_PATH = "categories.json"
 DATASET_DIR = "dataset"
 OUTPUT_DIR_DEFAULT = "output"
@@ -29,11 +30,10 @@ def setup_logger(run_id: str, logs_dir: str = LOGS_DIR) -> logging.Logger:
     logger = logging.getLogger(LOGGER_NAME)
     logger.setLevel(logging.INFO)
 
-    # Avoid adding duplicate handlers if setup_logger is called multiple times
     if logger.handlers:
         return logger
 
-    log_filename = os.path.join(logs_dir, f"multi_run_{run_id}.log")
+    log_filename = os.path.join(logs_dir, f"multi_run_safe_{run_id}.log")
 
     formatter = logging.Formatter(
         "%(asctime)s | %(levelname)s | %(name)s | %(message)s",
@@ -91,6 +91,27 @@ def _delete_input_file(path: str, logger: logging.Logger) -> None:
         logger.error("Failed to delete input file %s: %s", path, exc)
 
 
+def cleanup_dataset(
+    categories: List[Dict[str, Any]],
+    logger: logging.Logger,
+) -> None:
+    """
+    Delete all review and meta input files for every category.
+    Only called after all categories have completed successfully.
+    """
+    logger.info("All categories completed -- starting dataset cleanup.")
+    for category in categories:
+        name = category.get("name", "<unknown>")
+        review_file = category.get("review_file")
+        meta_file = category.get("meta_file")
+        if review_file:
+            _delete_input_file(os.path.join(DATASET_DIR, review_file), logger)
+        if meta_file:
+            _delete_input_file(os.path.join(DATASET_DIR, meta_file), logger)
+        logger.info("Category %s: input files cleaned up.", name)
+    logger.info("Dataset cleanup complete.")
+
+
 def run_category(
     category: Dict[str, Any],
     *,
@@ -98,12 +119,12 @@ def run_category(
     use_gpu: bool,
     limit: Optional[int],
     blocksize: str,
-    delete_inputs: bool,
     logger: logging.Logger,
 ) -> Dict[str, Any]:
     """
     Run the pipeline for a single category.
     Returns a dict with status, timings, and paths.
+    Input files are never deleted here -- cleanup happens after all categories succeed.
     """
     name = category.get("name")
     review_file = category.get("review_file")
@@ -195,10 +216,6 @@ def run_category(
         )
     logger.info("Category %s: timings written to %s", name, timings_path)
 
-    if delete_inputs:
-        _delete_input_file(review_path, logger)
-        _delete_input_file(meta_path, logger)
-
     result["timings_s"] = timings
     result["status"] = "success"
     return result
@@ -208,7 +225,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description=(
             "Run the data pipeline for multiple categories sequentially, using a JSON "
-            "config file and optionally deleting input JSONL files on success."
+            "config file. Input files are deleted only after ALL categories succeed."
         )
     )
     parser.add_argument(
@@ -229,8 +246,8 @@ def main() -> None:
     )
     parser.add_argument(
         "--blocksize",
-        default="64MB",
-        help="Dask read block size (default 64MB).",
+        default="256MB",
+        help="Dask read block size (default 256MB).",
     )
     parser.add_argument(
         "--output-dir",
@@ -254,11 +271,21 @@ def main() -> None:
         ),
     )
     parser.add_argument(
+        "--workers",
+        type=int,
+        default=None,
+        help=(
+            "Number of threads for the Dask threaded scheduler (e.g. --workers 4). "
+            "If omitted, Dask uses its default single-threaded scheduler. "
+            "Run 'nproc' to see available cores."
+        ),
+    )
+    parser.add_argument(
         "--no-delete-inputs",
         action="store_true",
         help=(
-            "If set, do NOT delete category input JSONL files after success "
-            "(useful for debugging)."
+            "If set, do NOT delete dataset input files after all categories succeed. "
+            "Useful for debugging or rerunning."
         ),
     )
 
@@ -266,6 +293,13 @@ def main() -> None:
 
     run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
     logger = setup_logger(run_id)
+
+    # Configure Dask threaded scheduler if workers specified
+    if args.workers is not None:
+        dask.config.set(scheduler="threads", num_workers=args.workers)
+        logger.info("Using threaded scheduler with %d threads.", args.workers)
+    else:
+        logger.info("No --workers specified, using Dask default scheduler.")
 
     logger.info("Multi-category run started with config=%s", args.config)
     config = load_config(args.config)
@@ -279,7 +313,6 @@ def main() -> None:
     os.makedirs(output_dir, exist_ok=True)
 
     summary: List[Dict[str, Any]] = []
-    delete_inputs = not args.no_delete_inputs
     any_failure = False
 
     for cat in categories:
@@ -291,7 +324,6 @@ def main() -> None:
                 use_gpu=args.gpu,
                 limit=args.limit,
                 blocksize=args.blocksize,
-                delete_inputs=delete_inputs,
                 logger=logger,
             )
             summary.append(result)
@@ -311,7 +343,17 @@ def main() -> None:
                 )
                 break
 
-    # Write summary timings if requested
+    # Only delete inputs if ALL categories succeeded and --no-delete-inputs not set
+    if not any_failure and not args.no_delete_inputs:
+        cleanup_dataset(categories, logger)
+    elif any_failure:
+        logger.warning(
+            "Skipping dataset cleanup due to one or more category failures. "
+            "Input files have been preserved."
+        )
+    elif args.no_delete_inputs:
+        logger.info("--no-delete-inputs set, skipping dataset cleanup.")
+
     summary_path: Optional[str]
     if args.summary_timings is not None:
         summary_path = args.summary_timings
@@ -323,10 +365,11 @@ def main() -> None:
             json.dump(
                 {
                     "backend": "gpu" if args.gpu else "cpu",
+                    "workers": args.workers,
                     "config": os.path.abspath(args.config),
                     "output_dir": os.path.abspath(output_dir),
-                    "delete_inputs": delete_inputs,
                     "continue_on_error": args.continue_on_error,
+                    "delete_inputs": not args.no_delete_inputs,
                     "categories": summary,
                 },
                 f,
@@ -345,4 +388,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
