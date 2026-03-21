@@ -1,0 +1,57 @@
+2026-03-19 19:25:34 | INFO | multi_categories_safe | Logging initialized. Log file: logs/multi_run_safe_20260319_192534.log
+2026-03-19 19:25:34 | INFO | multi_categories_safe | Using threaded scheduler with 4 threads.
+2026-03-19 19:25:34 | INFO | multi_categories_safe | Multi-category run started with config=categories.json
+2026-03-19 19:25:34 | INFO | multi_categories_safe | === Starting category: Electronics ===
+2026-03-19 19:25:34 | INFO | multi_categories_safe | Category Electronics: review=dataset/Electronics.jsonl meta=dataset/meta_Electronics.jsonl output_parquet=output/dev_Electronics.parquet
+2026-03-19 19:27:07 | INFO | multi_categories_safe | Category Electronics: load completed in 93.58s
+2026-03-19 19:27:07 | INFO | multi_categories_safe | Category Electronics: filter completed in 0.02s
+2026-03-19 19:57:57 | INFO | multi_categories_safe | Category Electronics: to_parquet completed in 1849.74s
+2026-03-19 19:57:57 | INFO | multi_categories_safe | Category Electronics: DONE in 1943.33s
+2026-03-19 19:57:57 | INFO | multi_categories_safe | Category Electronics: timings written to output/timings_Electronics.json
+2026-03-19 19:57:58 | INFO | multi_categories_safe | === Starting category: Tools_and_Home_Improvement ===
+2026-03-19 19:57:58 | INFO | multi_categories_safe | Category Tools_and_Home_Improvement: review=dataset/Tools_and_Home_Improvement.jsonl meta=dataset/meta_Tools_and_Home_Improvement.jsonl output_parquet=output/dev_Tools_and_Home_Improvement.parquet
+2026-03-19 19:59:37 | INFO | multi_categories_safe | Category Tools_and_Home_Improvement: load completed in 98.71s
+2026-03-19 19:59:37 | INFO | multi_categories_safe | Category Tools_and_Home_Improvement: filter completed in 0.02s
+2026-03-19 20:14:59 | INFO | multi_categories_safe | Category Tools_and_Home_Improvement: to_parquet completed in 921.95s
+2026-03-19 20:14:59 | INFO | multi_categories_safe | Category Tools_and_Home_Improvement: DONE in 1020.67s
+2026-03-19 20:14:59 | INFO | multi_categories_safe | Category Tools_and_Home_Improvement: timings written to output/timings_Tools_and_Home_Improvement.json
+2026-03-19 20:15:00 | INFO | multi_categories_safe | === Starting category: Industrial_and_Scientific ===
+2026-03-19 20:15:00 | INFO | multi_categories_safe | Category Industrial_and_Scientific: review=dataset/Industrial_and_Scientific.jsonl meta=dataset/meta_Industrial_and_Scientific.jsonl output_parquet=output/dev_Industrial_and_Scientific.parquet
+2026-03-19 20:15:22 | INFO | multi_categories_safe | Category Industrial_and_Scientific: load completed in 22.24s
+2026-03-19 20:15:22 | INFO | multi_categories_safe | Category Industrial_and_Scientific: filter completed in 0.02s
+2026-03-19 20:17:30 | INFO | multi_categories_safe | Category Industrial_and_Scientific: to_parquet completed in 128.04s
+2026-03-19 20:17:30 | INFO | multi_categories_safe | Category Industrial_and_Scientific: DONE in 150.29s
+2026-03-19 20:17:30 | INFO | multi_categories_safe | Category Industrial_and_Scientific: timings written to output/timings_Industrial_and_Scientific.json
+2026-03-19 20:17:30 | INFO | multi_categories_safe | === Starting category: Sports_and_Outdoors ===
+2026-03-19 20:17:30 | INFO | multi_categories_safe | Category Sports_and_Outdoors: review=dataset/Sports_and_Outdoors.jsonl meta=dataset/meta_Sports_and_Outdoors.jsonl output_parquet=output/dev_Sports_and_Outdoors.parquet
+2026-03-19 20:19:00 | INFO | multi_categories_safe | Category Sports_and_Outdoors: load completed in 90.02s
+2026-03-19 20:19:00 | INFO | multi_categories_safe | Category Sports_and_Outdoors: filter completed in 0.02s
+2026-03-19 20:29:45 | INFO | multi_categories_safe | Category Sports_and_Outdoors: to_parquet completed in 644.53s
+2026-03-19 20:29:45 | INFO | multi_categories_safe | Category Sports_and_Outdoors: DONE in 734.57s
+2026-03-19 20:29:45 | INFO | multi_categories_safe | Category Sports_and_Outdoors: timings written to output/timings_Sports_and_Outdoors.json
+2026-03-19 20:29:45 | INFO | multi_categories_safe | === Starting category: Clothing_Shoes_and_Jewelry ===
+2026-03-19 20:29:45 | INFO | multi_categories_safe | Category Clothing_Shoes_and_Jewelry: review=dataset/Clothing_Shoes_and_Jewelry.jsonl meta=dataset/meta_Clothing_Shoes_and_Jewelry.jsonl output_parquet=output/dev_Clothing_Shoes_and_Jewelry.parquet
+2026-03-19 20:37:10 | INFO | multi_categories_safe | Category Clothing_Shoes_and_Jewelry: load completed in 444.15s
+2026-03-19 20:37:10 | INFO | multi_categories_safe | Category Clothing_Shoes_and_Jewelry: filter completed in 0.04s
+2026-03-19 21:43:18 | INFO | multi_categories_safe | Category Clothing_Shoes_and_Jewelry: to_parquet completed in 3968.60s
+2026-03-19 21:43:18 | INFO | multi_categories_safe | Category Clothing_Shoes_and_Jewelry: DONE in 4412.80s
+2026-03-19 21:43:18 | INFO | multi_categories_safe | Category Clothing_Shoes_and_Jewelry: timings written to output/timings_Clothing_Shoes_and_Jewelry.json
+2026-03-19 21:43:22 | INFO | multi_categories_safe | All categories completed -- starting dataset cleanup.
+2026-03-19 21:43:22 | INFO | multi_categories_safe | Deleted input file: dataset/Electronics.jsonl
+2026-03-19 21:43:22 | INFO | multi_categories_safe | Deleted input file: dataset/meta_Electronics.jsonl
+2026-03-19 21:43:22 | INFO | multi_categories_safe | Category Electronics: input files cleaned up.
+2026-03-19 21:43:22 | INFO | multi_categories_safe | Deleted input file: dataset/Tools_and_Home_Improvement.jsonl
+2026-03-19 21:43:22 | INFO | multi_categories_safe | Deleted input file: dataset/meta_Tools_and_Home_Improvement.jsonl
+2026-03-19 21:43:22 | INFO | multi_categories_safe | Category Tools_and_Home_Improvement: input files cleaned up.
+2026-03-19 21:43:22 | INFO | multi_categories_safe | Deleted input file: dataset/Industrial_and_Scientific.jsonl
+2026-03-19 21:43:22 | INFO | multi_categories_safe | Deleted input file: dataset/meta_Industrial_and_Scientific.jsonl
+2026-03-19 21:43:22 | INFO | multi_categories_safe | Category Industrial_and_Scientific: input files cleaned up.
+2026-03-19 21:43:22 | INFO | multi_categories_safe | Deleted input file: dataset/Sports_and_Outdoors.jsonl
+2026-03-19 21:43:22 | INFO | multi_categories_safe | Deleted input file: dataset/meta_Sports_and_Outdoors.jsonl
+2026-03-19 21:43:22 | INFO | multi_categories_safe | Category Sports_and_Outdoors: input files cleaned up.
+2026-03-19 21:43:22 | INFO | multi_categories_safe | Deleted input file: dataset/Clothing_Shoes_and_Jewelry.jsonl
+2026-03-19 21:43:22 | INFO | multi_categories_safe | Deleted input file: dataset/meta_Clothing_Shoes_and_Jewelry.jsonl
+2026-03-19 21:43:22 | INFO | multi_categories_safe | Category Clothing_Shoes_and_Jewelry: input files cleaned up.
+2026-03-19 21:43:22 | INFO | multi_categories_safe | Dataset cleanup complete.
+2026-03-19 21:43:22 | INFO | multi_categories_safe | Multi-run summary written to output/timings_multi_summary.json
+2026-03-19 21:43:22 | INFO | multi_categories_safe | Multi-category run completed successfully.
