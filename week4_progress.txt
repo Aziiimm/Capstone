@@ -1,0 +1,99 @@
+WEEK 4 SUBMISSION PROGRESS (Sentiment/CPU)
+Project: GPU-Accelerated Hybrid Amazon Recommender
+Date: 2026-03-08
+
+What I implemented this week
+============================
+
+1) Sentiment + Hybrid Scoring Module (CPU baseline)
+---------------------------------------------------
+File added:
+- features/sentiment.py
+
+Implemented functions:
+- clean_text(text): lowercases review text, removes punctuation, normalizes spaces.
+- sentiment_score(text): lexicon-based sentiment score in [-1, 1].
+- normalize_sentiment(score): converts sentiment from [-1, 1] to [0, 1].
+- add_sentiment_columns(df): adds sentiment_raw and sentiment_norm columns.
+- add_hybrid_score(df): computes
+    hybrid_score = 0.7 * rating + 0.3 * sentiment_norm
+  (weights configurable).
+- cold_start_profile_from_texts(texts): builds a cold-start sentiment profile
+  from new user text only (mean raw and normalized sentiment).
+
+Why this matters:
+- This directly implements Week 4 "Generate sentiment scores".
+- It also implements the Phase 2 weighted fusion logic from PLAN.md.
+- It provides a practical cold-start foundation for users with no history.
+
+
+2) CPU Baseline Recommender
+---------------------------
+File added:
+- cpu/recommender.py
+
+Implemented:
+- CpuUserKnnRecommender.from_dataframe(df, score_col="rating"):
+  builds a user-item matrix on CPU with pandas/numpy.
+- cosine user-user similarity computation using numpy.
+- recommend_for_user(user_id, top_k, n_neighbors, exclude_seen):
+  neighbor-weighted top-K recommendations.
+- from_parquet(path): build baseline model directly from cleaned Parquet output.
+- batch_recommend(model, user_ids): helper for multi-user recommendations.
+
+Why this matters:
+- This fulfills the Week 4 requirement to build a CPU baseline.
+- It gives a comparable reference pipeline against the GPU recommender.
+
+
+3) Testing and Validation
+-------------------------
+Files added:
+- tests/test_sentiment_week4.py
+- tests/test_cpu_recommender_week4.py
+
+Test coverage added:
+- sentiment polarity checks (positive/negative/neutral)
+- normalization range checks
+- hybrid score column generation and relative ordering
+- cold-start profile behavior
+- CPU recommender known-user recommendations
+- CPU recommender unknown-user behavior
+
+Test run result:
+- Command: python -m pytest tests -v
+- Result: 8 passed
+
+
+4) Small robustness improvement
+-------------------------------
+File updated:
+- gpu/recommender.py
+
+Change:
+- Improved top-K filtering path by converting score vector to NumPy once, then
+  performing finite checks on host values. This avoids scalar `.get()` edge
+  cases and makes recommendation extraction more reliable.
+
+
+How this aligns with README.md and PLAN.md
+==========================================
+- README goal: compare CPU baseline vs GPU pipeline.
+  -> Implemented CPU baseline recommender module.
+- PLAN Week 4 milestone: "Sentiment/CPU".
+  -> Implemented sentiment scoring and hybrid score formula.
+- PLAN Phase 2: hybrid fusion and cold-start direction.
+  -> Implemented hybrid score function and cold-start sentiment profile helper.
+
+
+Next recommended steps (Week 5+)
+================================
+1. Add evaluation metrics module:
+   - Precision@K, NDCG@K, and latency.
+2. Add benchmark script:
+   - run CPU and GPU recommenders on same split, print speedup factor.
+3. Integrate sentiment score into train/inference paths:
+   - compare rating-only vs hybrid_score performance.
+4. Optional:
+   - replace lexicon sentiment with VADER/DistilBERT for stronger text signal.
+

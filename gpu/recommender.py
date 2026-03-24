@@ -187,7 +187,7 @@ class GpuKnnRecommender:
 
         user_vec = self.user_item_matrix[idx : idx + 1]
         # Get neighbor users (including the user itself at position 0).
-        distances, indices = self.knn.kneighbors(user_vec)
+        _distances, indices = self.knn.kneighbors(user_vec)
         neighbor_indices = indices[0]
 
         # Drop self-neighbor (assumed to be at index 0).
@@ -204,9 +204,10 @@ class GpuKnnRecommender:
             scores = cp.where(seen_mask, -cp.inf, scores)
 
         # Get top-K item indices by score.
-        top_idx = cp.asnumpy(cp.argsort(scores))  # ascending
+        score_np = cp.asnumpy(scores)
+        top_idx = np.argsort(score_np)  # ascending
         # Filter out items with -inf scores, then take top_k in descending order.
-        top_idx = [i for i in top_idx if np.isfinite(scores[i].get())][-top_k:][::-1]
+        top_idx = [int(i) for i in top_idx if np.isfinite(score_np[i])][-top_k:][::-1]
 
         return [self.idx_to_item[i] for i in top_idx]
 
