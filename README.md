@@ -59,6 +59,98 @@ Expected columns: `reviewerID`, `asin`, `rating`, `reviewText`, `timestamp`, `pr
 
 ---
 
+### Step 5: Run sentiment scoring
+
+After generating the processed Parquet, run VADER sentiment analysis and compute hybrid scores.
+
+**Full run** (replace `<CATEGORY>` with your category name, e.g. `Electronics`):
+
+```bash
+python -m sentiment.sentiment_scorer \
+    --input  output/processed/dev_<CATEGORY>.parquet \
+    --output output/sentiment/dev_<CATEGORY>_sentiment.parquet \
+    --timings-file output/timings/timings_sentiment_<CATEGORY>.json
+```
+
+This adds two new columns to the output Parquet:
+
+| Column               | Description                                               |
+| -------------------- | --------------------------------------------------------- |
+| `sentiment_compound` | VADER compound score (−1 to +1)                           |
+| `hybrid_score`       | Blended score: `0.7 × rating_norm + 0.3 × sentiment_norm` |
+
+It also logs the **top-10 cold-start recommendations** (highest average hybrid score across all users) directly to the console.
+
+---
+
+### Step 6: Train the recommender model
+
+Once you have the enriched Parquet from Step 5, train the SVD recommender on the hybrid scores.
+
+**Full run** (replace `<CATEGORY>` with your category name, e.g. `Electronics`):
+
+```bash
+python -m models.cpu_baseline \
+    --input      output/sentiment/dev_<CATEGORY>_sentiment.parquet \
+    --category   <CATEGORY> \
+    --output-dir output \
+    --model-dir  models/saved
+```
+
+**Optional:** pass `--demo-user <USER_ID>` to immediately print top-10 recommendations for one user after training:
+
+```bash
+python -m models.cpu_baseline \
+    --input      output/sentiment/dev_<CATEGORY>_sentiment.parquet \
+    --category   <CATEGORY> \
+    --output-dir output \
+    --model-dir  models/saved \
+    --demo-user  A1B2C3D4EXAMPLE
+```
+
+This produces:
+
+| Output file                               | Description                                        |
+| ----------------------------------------- | -------------------------------------------------- |
+| `models/saved/<CATEGORY>_svd.pkl`         | Trained SVD model                                  |
+| `models/saved/<CATEGORY>_recommender.pkl` | `AmazonRecommender` object (SVD + cold-start pool) |
+| `output/metrics_cpu_<CATEGORY>.json`      | RMSE, MAE, NDCG@10, Precision@10 for SVD           |
+
+---
+
+### Step 7: Query the recommender API
+
+After training, load the saved `AmazonRecommender` and call `.recommend()` from Python:
+
+```python
+from models.recommender import AmazonRecommender
+
+# Load the trained recommender (replace Electronics with your category)
+rec = AmazonRecommender.load("models/saved/Electronics")
+
+# Known user → SVD-predicted rankings for all unseen items
+recs = rec.recommend("A1B2C3D4EXAMPLE", top_k=10)
+print(recs.to_string(index=False))
+
+# New / unknown user → cold-start popularity ranking
+recs = rec.recommend("unknown_user_xyz", top_k=10)
+print(recs.to_string(index=False))
+```
+
+The returned DataFrame always has these columns:
+
+| Column            | Description                                                              |
+| ----------------- | ------------------------------------------------------------------------ |
+| `rank`            | 1-based rank                                                             |
+| `asin`            | Product ID                                                               |
+| `product_title`   | Product name                                                             |
+| `predicted_score` | SVD-estimated hybrid score (known user) or avg hybrid score (cold-start) |
+| `source`          | `"SVD"` for known users, `"cold_start"` for new users                    |
+
+> **Routing logic:** if the user has no review history in the training data, `.recommend()` automatically falls back to the cold-start pool (products with ≥ 20 reviews ranked by average hybrid score).
+
+---
+
 ## Data schema (output Parquet)
 
 | Column          | Description               |
@@ -106,14 +198,24 @@ python -m pytest tests/ -v
 ```
 Capstone/
   data/
-    load.py         # Load review + meta, join, prune
-    filter.py       # User ≥6, item ≥11 reviews
-    to_parquet.py   # Write Parquet
+    load.py                 # Load review + meta, join, prune
+    filter.py               # User ≥6, item ≥11 reviews
+    to_parquet.py           # Write Parquet
     run_pipeline.py         # Single-category CLI entry point
     run_multi_categories.py # Multi-category orchestrator (server runs)
-  dataset/          # Put your .jsonl or .jsonl.gz files here
-  output/           # Parquet output
-  logs/             # Multi-category run logs
+  sentiment/
+    sentiment_scorer.py     # VADER scoring + hybrid score fusion + cold-start recs
+  models/
+    cpu_baseline.py         # Train SVD on hybrid scores
+    recommender.py          # AmazonRecommender API (SVD inference + cold-start fallback)
+    saved/                  # Saved model pickles (generated at training time)
+  dataset/                  # Put your .jsonl or .jsonl.gz files here
+  output/
+    processed/              # Cleaned Parquet files (from run_pipeline)
+    sentiment/              # Enriched Parquet files (from sentiment_scorer)
+    timings/                # Per-stage timing JSON files
+    metrics_cpu_*.json      # Evaluation metrics per category
+  logs/                     # Multi-category run logs
   tests/
   requirements.txt
 ```
