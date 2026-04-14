@@ -1,0 +1,49 @@
+GPU demo + validation TODOs
+==========================
+
+Goal
+----
+Have a repeatable demo that proves:
+1) the dataset can be produced locally (CPU path) and
+2) the GPU path really runs on the NVIDIA GPU (cuDF/cuML/CuPy) using that dataset.
+
+Prereqs (decisions)
+-------------------
+- Decide where GPU will run:
+  - Recommended: WSL2 (Ubuntu) on Windows for RAPIDS.
+  - Alternate: Linux machine / cloud VM with NVIDIA GPU.
+
+Todos (implementation work)
+---------------------------
+- [ ] Add a CLI entry point for GPU recommender
+      - Example module: `python -m gpu.run_knn --parquet output/sample.parquet --user <id> --top-k 10`
+      - Print: GPU device name, CuPy backend, timing, and sample recommendations.
+
+- [ ] Add an environment file for GPU
+      - Option A: `environment.yml` (conda) pinned to a RAPIDS release.
+      - Option B: `requirements-gpu.txt` (pip) with cudf/cuML wheels (Linux-only).
+
+- [ ] Add a one-command GPU smoke test
+      - Script `scripts/gpu_smoke_test.py` that:
+        - imports cudf/cupy/cuml
+        - prints `cp.cuda.runtime.getDeviceProperties(0)["name"]`
+        - loads `output/sample.parquet`
+        - trains `GpuKnnRecommender.from_parquet`
+        - runs `recommend_for_user` for one known user
+
+- [ ] Add a helper to pick a valid `reviewerID` automatically
+      - Read first N unique `reviewerID`s from parquet and select one.
+      - Avoid manual digging for an ID during demos.
+
+- [ ] Add benchmarking output
+      - Write timings JSON for GPU steps (load, build matrix, fit KNN, recommend).
+      - Mirror the CPU pipeline’s `--timings-file` idea.
+
+- [ ] (Optional) Add a sentiment module using Hugging Face
+      - Batch inference on review text (GPU if available).
+      - Store `sentiment_score` and `hybrid_score` columns in Parquet.
+
+- [ ] Document Windows setup clearly
+      - RAPIDS support story: WSL2/Linux required.
+      - Include exact install commands and troubleshooting section.
+
