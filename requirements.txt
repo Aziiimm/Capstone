@@ -6,6 +6,9 @@ pandas>=2.0.0
 
 # Download from Hugging Face (optional, for download script)
 huggingface_hub>=0.20.0
+transformers>=4.40.0
+sentence-transformers>=2.7.0
+torch>=2.2.0
 
 # Tests
 pytest>=7.0.0

@@ -57,6 +57,31 @@ python -c "import pandas as pd; d = pd.read_parquet('output/sample.parquet'); pr
 
 Expected columns: `reviewerID`, `asin`, `rating`, `reviewText`, `timestamp`, `product_title`, `main_category`.
 
+### Step 5: Test Hugging Face models on output (optional)
+
+Use the model test script to benchmark multiple Hugging Face models and write an enriched sample:
+
+```bash
+python -m data.run_hf_models --input output/sample.parquet --output output/sample_hf.parquet --rows 1000 --report-json output/hf_report.json
+```
+
+What this does:
+- Benchmarks default sentiment models:
+  - `distilbert/distilbert-base-uncased-finetuned-sst-2-english`
+  - `cardiffnlp/twitter-roberta-base-sentiment-latest`
+- Benchmarks default embedding models:
+  - `sentence-transformers/all-MiniLM-L6-v2`
+  - `BAAI/bge-base-en-v1.5`
+- Writes enriched data with columns:
+  - `hf_sentiment_model`, `hf_sentiment_label`, `hf_sentiment_score`
+  - `hf_embedding_model`, `hf_embedding_dim`, `hf_embedding_vector`
+
+Example with custom models:
+
+```bash
+python -m data.run_hf_models --input output/sample.parquet --output output/sample_hf_custom.parquet --rows 2000 --sentiment-models distilbert/distilbert-base-uncased-finetuned-sst-2-english cardiffnlp/twitter-roberta-base-sentiment-latest --embedding-models sentence-transformers/all-MiniLM-L6-v2 intfloat/e5-base-v2 --use-sentiment-model cardiffnlp/twitter-roberta-base-sentiment-latest --use-embedding-model intfloat/e5-base-v2 --report-json output/hf_report_custom.json
+```
+
 ---
 
 ## Data schema (output Parquet)
