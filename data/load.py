@@ -43,6 +43,43 @@ META_COLUMN_MAP = {
 }
 JOIN_KEY = "parent_asin"
 
+def _normalize_schema(ddf: dd.DataFrame) -> dd.DataFrame:
+    """
+    Enforce consistent dtypes across partitions so Parquet writes don't fail.
+
+    Why:
+    - JSONL sources can yield mixed dtypes across partitions (e.g. rating as str in one
+      partition and int in another, timestamp as str/int).
+    - Dask+PyArrow requires a stable schema to write Parquet.
+    """
+
+    def _fix(part: pd.DataFrame) -> pd.DataFrame:
+        out = part.copy()
+
+        # IDs / text columns -> pandas string dtype (safe for mixed objects)
+        for c in ("reviewerID", "asin", "reviewText", "product_title", "main_category"):
+            if c in out.columns:
+                out[c] = out[c].astype("string")
+
+        # rating -> numeric (float32); coerce bad values to NaN
+        if "rating" in out.columns:
+            out["rating"] = pd.to_numeric(out["rating"], errors="coerce").astype("float32")
+
+        # timestamp -> datetime64[ns]
+        if "timestamp" in out.columns:
+            ts = out["timestamp"]
+            if pd.api.types.is_datetime64_any_dtype(ts):
+                out["timestamp"] = ts.astype("datetime64[ns]")
+            else:
+                # Most Amazon Reviews sources use Unix seconds.
+                ts_num = pd.to_numeric(ts, errors="coerce")
+                out["timestamp"] = pd.to_datetime(ts_num, unit="s", errors="coerce")
+
+        return out
+
+    meta = _fix(ddf._meta)  # type: ignore[attr-defined]
+    return ddf.map_partitions(_fix, meta=meta)
+
 
 def _load_review(path: str, blocksize: str) -> dd.DataFrame:
     """Load review JSONL; return Dask DataFrame with core columns + parent_asin for join."""
@@ -142,6 +179,9 @@ def load_from_local(
         ddf_review = _load_review(path, blocksize)
         ddf_meta = _load_meta(meta_path, blocksize)
         ddf = _join_review_meta(ddf_review, ddf_meta)
+
+    # Enforce a stable schema early (before filter/to_parquet)
+    ddf = _normalize_schema(ddf)
 
     if limit is not None:
         ddf = ddf.head(limit, npartitions=-1)
