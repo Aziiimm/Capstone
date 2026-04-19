@@ -66,7 +66,7 @@ def main() -> None:
     if args.gpu and HAS_RMM:
             rmm.reinitialize(
                 pool_allocator=True,
-                initial_pool_size=int(2e9),  # Explicitly cast to int
+                initial_pool_size=int(8e9),  # Explicitly cast to int
                 managed_memory=True,
             )
 
