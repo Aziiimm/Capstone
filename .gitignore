@@ -1,0 +1,45 @@
+# Byte-compiled / caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+
+# Large local data (Amazon JSONL, etc.)
+dataset/
+
+# Pipeline outputs (Parquet shards, experiment JSON)
+output/
+
+# Columnar exports (usually large)
+*.parquet
+
+# RAPIDS / GDS
+cufile.log
+
+# Training / inference artifacts (often GB+)
+*.pkl
+*.pickle
+
+# Run logs
+logs/
+*.log
+
+# Jupyter
+.ipynb_checkpoints/
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# Accidental pip output saved as a file (e.g. =12.0.0)
+/=*

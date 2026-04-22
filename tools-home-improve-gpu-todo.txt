@@ -1,0 +1,173 @@
+tools-home-improve-gpu branch analysis and TODO
+Generated: 2026-04-22
+
+What this branch is trying to accomplish
+----------------------------------------
+The engineer appears to be turning an Amazon Reviews 2023 data-processing prototype into a GPU-accelerated recommender workflow for Tools and Home Improvement, then expanding it to multiple categories.
+
+Main goals visible in the branch:
+
+1. Build a RAPIDS GPU data pipeline.
+   - Load Amazon review JSONL data with Dask/cuDF.
+   - Standardize the Amazon 2023 schema into the project schema:
+     reviewerID, asin, rating, reviewText, timestamp.
+   - Join review rows to metadata through parent_asin.
+   - Filter down to users with at least 6 reviews and items with at least 11 reviews.
+   - Write the final 7-column Parquet output:
+     reviewerID, asin, rating, reviewText, timestamp, product_title, main_category.
+
+2. Make the pipeline run across multiple categories.
+   - Add categories.json with Tools_and_Home_Improvement, Industrial_and_Scientific, and Sports_and_Outdoors.
+   - Add data/run_multicategories.py to process each category sequentially.
+   - Use Dask-CUDA, RMM memory pools, and VRAM cleanup between categories.
+   - Save a summary file at output/multi_run_summary.json.
+
+3. Add GPU model training.
+   - Add models/new_model.py to train a cuML NearestNeighbors recommender.
+   - Build one global user/item integer mapping across one or more Parquet inputs.
+   - Build an item-by-user sparse matrix on GPU.
+   - Save a pickled AmazonRecommenderGPU object.
+
+4. Add interactive inference.
+   - Add models/inference.py to load models/full_recommender.pkl.
+   - Search product titles by text.
+   - Run nearest-neighbor inference and print similar product titles.
+
+5. Capture performance experiments.
+   - The branch contains timing outputs and notes showing successful limited runs.
+   - The previous notes mention that full Tools_and_Home_Improvement runs had write-stage hangs/deadlocks or long stalls.
+
+Important branch risks and gaps
+-------------------------------
+1. This branch has no merge base with main in the local checkout, so it needs careful reconciliation before it is merged or used as a PR.
+
+2. Compared with main, this branch deletes important project files:
+   - .gitignore
+   - README.md
+   - docs/PLAN.md
+   - weekly check-ins
+   - tests/test_filter.py
+
+3. Generated or local-only files are committed:
+   - data/__pycache__/*
+   - models/__pycache__/*
+   - cufile.log
+   - output/multi_run_summary.json
+   - output/timings.json
+   - =12.0.0
+   - test.txt
+
+4. There are many untracked local artifacts:
+   - dataset/*
+   - output/*.parquet
+   - output/timings_*.json
+   - cpu/__pycache__/*
+   - gpu/__pycache__/*
+
+5. data/run_pipeline.py imports cudf at module import time. That can break CPU-only environments before the code reaches the optional GPU checks.
+
+6. data/run_multicategories.py uses local imports like "from load import load". That works only in some invocation styles and may fail with "python -m data.run_multicategories".
+
+7. GPU memory settings are hard-coded and inconsistent.
+   - run_pipeline.py says 7GB in the comment but initializes 8GB.
+   - run_multicategories.py hard-codes a 20GB pool and mentions TITAN RTX, which will not fit on an 8GB RTX 3060 Ti.
+
+8. The timing numbers are misleading because Dask is lazy. The near-zero filter times likely measure graph construction, while actual work happens during the Parquet write.
+
+9. The metadata join may not scale. load.py computes the full metadata dataframe before joining in the full-data path, which can exhaust host or GPU memory on large categories.
+
+10. to_parquet.py assumes metadata columns always exist. Running without --meta can fail because product_title and main_category are required in FINAL_COLUMNS.
+
+11. models/new_model.py and models/inference.py are prototypes.
+    - The model path is hard-coded in inference.py.
+    - Inference output has encoding/mojibake issues.
+    - The recommender returns titles only, with no ASINs, scores, or category context.
+    - Pickling a cuML model plus GPU sparse matrix may not be portable across environments.
+
+12. requirements.txt mixes RAPIDS, CUDA, and CuPy assumptions. The file named =12.0.0 appears to be accidental pip output from installing cupy-cuda11x.
+
+TODO list
+---------
+1. Reconcile this branch with main.
+   - Decide whether to rebase, cherry-pick the useful commits, or manually port the GPU work.
+   - Restore or rewrite README.md, docs, .gitignore, and tests instead of deleting them.
+
+2. Clean repository artifacts.
+   - Remove committed __pycache__ files.
+   - Remove cufile.log, output/*.json experiment files, =12.0.0, and test.txt from version control.
+   - Add or restore .gitignore entries for dataset/, output/, logs/, __pycache__/, *.pyc, .pytest_cache/, and generated model pickle files.
+
+3. Fix Python package imports and entrypoints.
+   - Make data/run_multicategories.py work both as a direct script and as "python -m data.run_multicategories".
+   - Use package-safe imports or add proper package init files.
+   - Verify all documented commands actually run.
+
+4. Make CPU mode safe again.
+   - Remove unconditional top-level cudf imports from scripts that should support CPU mode.
+   - Keep GPU imports inside optional GPU branches.
+   - Run the pipeline once without --gpu on a small fixture.
+
+5. Make GPU memory configurable.
+   - Replace hard-coded 8GB and 20GB RMM pools with CLI flags or environment variables.
+   - Set safe defaults for 8GB GPUs.
+   - Document tested settings for RTX 3060 Ti, TITAN RTX, and any cluster GPU.
+
+6. Fix accurate timing measurements.
+   - Force compute at stage boundaries when comparing load/filter/write performance.
+   - Separate graph-construction time from actual compute time.
+   - Save timings per category with row counts and output sizes.
+
+7. Harden the loader and metadata join.
+   - Avoid computing the full metadata dataframe into memory for full-size datasets.
+   - Validate .jsonl and .jsonl.gz inputs.
+   - Confirm parent_asin and asin handling is correct for both filtering and metadata joins.
+   - Add checks for missing metadata columns and null product titles.
+
+8. Restore focused tests.
+   - Recreate tests for schema normalization.
+   - Test user/item count filtering.
+   - Test metadata joins.
+   - Test Parquet output column order.
+   - Add a small fixture that can run in CPU-only CI.
+
+9. Validate the multi-category runner.
+   - Run with --limit on all configured categories.
+   - Confirm missing dataset files fail clearly and do not silently produce partial results.
+   - Either implement --workers or remove the argument.
+   - Make output paths configurable instead of hard-coding dataset/ and output/.
+
+10. Resolve the full-dataset write-stage issue.
+    - Reproduce the long write/deadlock behavior with current code.
+    - Try smaller block sizes, partition sizing, spilling settings, and non-managed RMM memory.
+    - Record the working configuration in docs.
+
+11. Clean up model training.
+    - Train one global model from multiple Parquet directories rather than trying to merge separate pickle files.
+    - Add row/user/item counts before training.
+    - Save mapping tables separately from the model if the pickle becomes too large or fragile.
+    - Record model size, training time, and GPU memory usage.
+
+12. Fix inference.py.
+    - Add CLI args for --model-path, --top-k, and optional search limit.
+    - Fix text encoding in printed messages.
+    - Return ASIN, product title, similarity score, and category where available.
+    - Add a smoke test using a tiny saved model or a mocked recommender.
+
+13. Stabilize dependencies.
+    - Replace requirements.txt with a clear CPU requirements file and a GPU environment file if needed.
+    - Pin RAPIDS versions that match the actual CUDA and driver environment.
+    - Remove accidental pip output files from the repo.
+
+14. Update project documentation.
+    - Document how to download expected Amazon Reviews 2023 category files.
+    - Document CPU single-category run, GPU single-category run, GPU multi-category run, model training, and inference.
+    - Include expected output schema and validation commands.
+
+15. Final verification before merging.
+    - Run tests.
+    - Run a small CPU pipeline.
+    - Run a small GPU pipeline if GPU is available.
+    - Run multi-category with --limit.
+    - Train a small model.
+    - Run inference against the small model.
+    - Confirm git status contains only intentional source/doc changes.

@@ -20,9 +20,14 @@ import cupy as cp
 from dask_cuda import LocalCUDACluster
 from dask.distributed import Client
 
-from load import load
-from filter import filter_counts
-from to_parquet import to_parquet
+try:
+    from data.load import load
+    from data.filter import filter_counts
+    from data.to_parquet import to_parquet
+except ImportError:
+    from load import load
+    from filter import filter_counts
+    from to_parquet import to_parquet
 
 LOGGER_NAME = "gpu_multi_orchestrator"
 DEFAULT_CONFIG_PATH = "categories.json"

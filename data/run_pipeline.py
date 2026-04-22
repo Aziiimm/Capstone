@@ -8,7 +8,6 @@ import argparse
 import json
 import os
 import time
-import cudf
 
 # RAPIDS imports for memory management
 try:
@@ -64,11 +63,11 @@ def main() -> None:
     args = parser.parse_args()
 
     if args.gpu and HAS_RMM:
-            rmm.reinitialize(
-                pool_allocator=True,
-                initial_pool_size=int(8e9),  # Explicitly cast to int
-                managed_memory=True,
-            )
+        rmm.reinitialize(
+            pool_allocator=True,
+            initial_pool_size=int(7e9),
+            managed_memory=True,
+        )
 
     os.makedirs(os.path.dirname(args.output) or ".", exist_ok=True)
     backend = "gpu" if args.gpu else "cpu"
