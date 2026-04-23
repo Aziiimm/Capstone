@@ -98,8 +98,9 @@ def main():
     item_map_cpu = global_item_map.to_pandas()
     final_mapping = full_titles_df.merge(item_map_cpu, on='asin')
     title_map_dict = final_mapping.set_index('item_idx')['product_title'].to_dict()
+    asin_to_idx_dict = final_mapping.set_index('asin')['item_idx'].to_dict()
 
-    recommender = AmazonRecommenderGPU(model, sparse_matrix, title_map_dict)
+    recommender = AmazonRecommenderGPU(model, sparse_matrix, title_map_dict, asin_to_idx_dict)
     
     if os.path.dirname(args.output):
         os.makedirs(os.path.dirname(args.output), exist_ok=True)
