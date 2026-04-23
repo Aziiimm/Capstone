@@ -79,6 +79,10 @@ def main():
     df = cudf.concat(dfs)
     del dfs
 
+    df['rating'] = df['rating'].astype('float32')
+    df['item_idx'] = df['item_idx'].astype('int32')
+    df['user_idx'] = df['user_idx'].astype('int32')
+
     # Phase 3: Build Matrix and Train
     n_users = len(global_user_map)
     n_items = len(global_item_map)
