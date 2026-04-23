@@ -57,7 +57,7 @@ def main():
             print(f"\n✅ Top 5 Similar Items (Inference took {inf_time:.2f}ms):")
             # Note: Your recommender.py returns the result of _format_results
             for r in recommendations:
-                print(f" • {r}") # Adjust this depending on how your _format_results is written
+                print(f" • {r['title']}  (ASIN: {r['asin']})")
 
         except (ValueError, IndexError):
             print("❌ Invalid selection. Please enter a number from the list.")
