@@ -76,26 +76,38 @@ def _load_review(path: str, blocksize: str) -> dd.DataFrame:
 
 
 def _load_meta(path: str, blocksize: str) -> dd.DataFrame:
-    """Load item metadata JSONL; return Dask DataFrame with parent_asin + product_title, main_category.
-    Load with pandas (meta files are smaller) to avoid Dask partition schema drift (price, author, etc.)."""
+    """
+    Load item metadata JSONL lazily using Dask.
+    Replaced pandas read_json to prevent massive task graph serialization on 5GB+ files.
+    """
     if not os.path.isfile(path):
         raise FileNotFoundError(
             f"Meta file not found: {path}. "
             "Download from the UCSD datarepo (see README)."
         )
-    pdf = pd.read_json(path, lines=True)
+    
+    # FIX: Use Dask's lazy reader instead of Pandas
+    ddf = dd.read_json(path, lines=True, blocksize=blocksize)
+    
     rename = {"title": "product_title", "main_category": "main_category"}
-    if "parent_asin" in pdf.columns:
-        pdf = pdf.rename(columns={"parent_asin": JOIN_KEY})
+    
+    if "parent_asin" in ddf.columns:
+        ddf = ddf.rename(columns={"parent_asin": JOIN_KEY})
+        
     for raw, out in rename.items():
-        if raw in pdf.columns:
-            pdf = pdf.rename(columns={raw: out})
-    keep = [c for c in [JOIN_KEY, "product_title", "main_category"] if c in pdf.columns]
+        if raw in ddf.columns:
+            ddf = ddf.rename(columns={raw: out})
+            
+    keep = [c for c in [JOIN_KEY, "product_title", "main_category"] if c in ddf.columns]
+    
     if JOIN_KEY not in keep:
-        raise ValueError(f"Meta file missing '{JOIN_KEY}'. Has: {list(pdf.columns)}")
-    pdf = pdf[keep].drop_duplicates(subset=[JOIN_KEY])
-    pdf[JOIN_KEY] = pdf[JOIN_KEY].astype(str)
-    return dd.from_pandas(pdf, npartitions=1)
+        raise ValueError(f"Meta file missing '{JOIN_KEY}'. Has: {list(ddf.columns)}")
+        
+    # Drop duplicates and enforce string type lazily
+    ddf = ddf[keep].drop_duplicates(subset=[JOIN_KEY])
+    ddf[JOIN_KEY] = ddf[JOIN_KEY].astype(str)
+    
+    return ddf
 
 
 def _join_partition_keep_columns(part: pd.DataFrame, out_cols: list[str]) -> pd.DataFrame:
