@@ -50,11 +50,13 @@ def main():
         del temp_df # Clear GPU memory for next file
 
     # Combine and get global unique codes
-    global_user_map = cudf.concat(all_reviewers).unique().reset_index(drop=True)
-    global_user_map['user_idx'] = global_user_map.index
-    
-    global_item_map = cudf.concat(all_asins).unique().reset_index(drop=True)
-    global_item_map['item_idx'] = global_item_map.index
+    unique_users = cudf.concat(all_reviewers).unique().reset_index(drop=True)
+    global_user_map = cudf.DataFrame({'reviewerID': unique_users,
+                                      'user_idx': cudf.Series(range(len(unique_users)), dtype='int32')})
+
+    unique_items = cudf.concat(all_asins).unique().reset_index(drop=True)
+    global_item_map = cudf.DataFrame({'asin': unique_items,
+                                      'item_idx': cudf.Series(range(len(unique_items)), dtype='int32')})
 
     print(f"Found {len(global_user_map):,} unique users and {len(global_item_map):,} unique items.")
 
