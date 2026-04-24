@@ -1,0 +1,10 @@
+nohup: ignoring input
+INFO:     Started server process [514466]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+Loading recommender from models/full_recommender.pkl ...
+Model ready in 2.96s  (2,168,296 items)
+INFO:     127.0.0.1:36952 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:41162 - "POST /recommend HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:34446 - "POST /recommend HTTP/1.1" 200 OK

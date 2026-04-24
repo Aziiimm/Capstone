@@ -1,11 +1,35 @@
 # CPU path: data pipeline (out-of-core load, join, filter, Parquet)
+
 # Install this for Tools and Home Improvement (CPU) or any CPU-only run.
+
 dask[complete]>=2024.1.0
+
 pyarrow>=14.0.0
+
 pandas>=2.0.0
 
+
+
 # Tests
+
 pytest>=7.0.0
 
+
+
 # GPU path (optional): only if you run the GPU pipeline (e.g. Electronics/Industrial GPU)
+
 # pip install cudf-cu12 dask-cudf-cu12  # or match your CUDA version
+
+cudf==26.2.1
+
+dask-cudf==26.2.1
+
+dask-cuda==26.2.0
+
+rmm==26.2.0
+
+pylibcudf==26.2.1
+
+cuda-python==13.1.1
+
+rapids-dask-dependency==26.2.0a0

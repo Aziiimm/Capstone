@@ -1,0 +1,29 @@
+[
+  {
+    "category": "Tools_and_Home_Improvement",
+    "status": "success",
+    "timings_s": {
+      "load_s": 50.83402658998966,
+      "filter_s": 0.06713896011933684,
+      "to_parquet_s": 296.07758439704776
+    }
+  },
+  {
+    "category": "Industrial_and_Scientific",
+    "status": "success",
+    "timings_s": {
+      "load_s": 12.103427706286311,
+      "filter_s": 0.04971129912883043,
+      "to_parquet_s": 29.47058149985969
+    }
+  },
+  {
+    "category": "Sports_and_Outdoors",
+    "status": "success",
+    "timings_s": {
+      "load_s": 46.09624130791053,
+      "filter_s": 0.05162440612912178,
+      "to_parquet_s": 164.04611722985283
+    }
+  }
+]

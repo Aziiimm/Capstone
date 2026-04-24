@@ -1,8 +1,8 @@
-# Raw and processed data (large files — do not commit)
-/output/*
-/dataset/*
-/pycache
-__pycache__
-.pytest_cache
-
-.env
+models/*.pkl
+output/*
+**/__pycache__/**
+models/__pycache__/recommender.cpython-312.pyc
+__pycache__/
+*.pyc
+*.pkl
+cufile.log

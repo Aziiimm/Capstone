@@ -1,6 +1,6 @@
 """
-Orchestrator: load -> filter -> to_parquet (data_clean entry point).
-Tracks wall-clock time per stage for performance comparison (CPU vs GPU, runs).
+Orchestrator: load -> filter -> to_parquet.
+Updated to allocate 7GB of VRAM for the RMM pool.
 """
 from __future__ import annotations
 
@@ -8,11 +8,18 @@ import argparse
 import json
 import os
 import time
+import cudf
+
+# RAPIDS imports for memory management
+try:
+    import rmm
+    HAS_RMM = True
+except ImportError:
+    HAS_RMM = False
 
 from data.load import load
 from data.filter import filter_counts
 from data.to_parquet import to_parquet
-
 
 def main() -> None:
     parser = argparse.ArgumentParser(
@@ -56,12 +63,20 @@ def main() -> None:
     )
     args = parser.parse_args()
 
+    if args.gpu and HAS_RMM:
+            rmm.reinitialize(
+                pool_allocator=True,
+                initial_pool_size=int(8e9),  # Explicitly cast to int
+                managed_memory=True,
+            )
+
     os.makedirs(os.path.dirname(args.output) or ".", exist_ok=True)
     backend = "gpu" if args.gpu else "cpu"
     timings: dict[str, float] = {}
 
+    # Stage 1: Load
     t0 = time.perf_counter()
-    print("Loading...")
+    print(f"Loading (Backend: {backend})...")
     ddf = load(
         args.source,
         meta=args.meta,
@@ -69,37 +84,31 @@ def main() -> None:
         use_gpu=args.gpu,
         blocksize=args.blocksize,
     )
+
+    # Stage 1: 
     timings["load_s"] = time.perf_counter() - t0
     print(f"  Load: {timings['load_s']:.2f}s")
 
+    # Stage 2: Filter
     t0 = time.perf_counter()
     print("Filtering (user >= 6 reviews, item >= 11 reviews)...")
     ddf = filter_counts(ddf)
     timings["filter_s"] = time.perf_counter() - t0
     print(f"  Filter: {timings['filter_s']:.2f}s")
 
+    # Stage 3: Write
     t0 = time.perf_counter()
     print("Writing Parquet...")
     to_parquet(ddf, args.output)
     timings["to_parquet_s"] = time.perf_counter() - t0
     print(f"  To Parquet: {timings['to_parquet_s']:.2f}s")
 
-    timings["total_s"] = timings["load_s"] + timings["filter_s"] + timings["to_parquet_s"]
+    timings["total_s"] = sum(v for k, v in timings.items() if "_s" in k)
     print(f"Done: {args.output} (total {timings['total_s']:.2f}s, backend={backend})")
 
     if args.timings_file:
-        out = {
-            "backend": backend,
-            "source": args.source,
-            "meta": args.meta,
-            "output": args.output,
-            "limit": args.limit,
-            "timings_s": timings,
-        }
         with open(args.timings_file, "w") as f:
-            json.dump(out, f, indent=2)
-        print(f"Timings written to {args.timings_file}")
-
+            json.dump({"backend": backend, "timings_s": timings}, f, indent=2)
 
 if __name__ == "__main__":
     main()
