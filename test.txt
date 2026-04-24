@@ -1,2 +1,0 @@
-bash line to run the full dataset
-python -m data.run_pipeline --source dataset/Tools_and_Home_Improvement.jsonl   --meta dataset/meta_Tools_and_Home_Improvement.jsonl --gpu --blocksize 128MB --output output/sample.parquet --timings-file output/timings.json

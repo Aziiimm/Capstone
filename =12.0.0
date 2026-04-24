@@ -1,8 +1,0 @@
-Collecting cupy-cuda11x
-  Downloading cupy_cuda11x-13.6.0-cp310-cp310-manylinux2014_x86_64.whl.metadata (2.4 kB)
-Requirement already satisfied: numpy<2.6,>=1.22 in /data/wong25/miniconda3/envs/amazon_gpu_stable/lib/python3.10/site-packages (from cupy-cuda11x) (1.24.4)
-Requirement already satisfied: fastrlock>=0.5 in /data/wong25/miniconda3/envs/amazon_gpu_stable/lib/python3.10/site-packages (from cupy-cuda11x) (0.8.3)
-Downloading cupy_cuda11x-13.6.0-cp310-cp310-manylinux2014_x86_64.whl (99.0 MB)
-   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 99.0/99.0 MB 45.7 MB/s  0:00:02
-Installing collected packages: cupy-cuda11x
-Successfully installed cupy-cuda11x-13.6.0
