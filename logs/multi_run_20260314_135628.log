@@ -1,0 +1,22 @@
+2026-03-14 13:56:28 | INFO | multi_categories | Logging initialized. Log file: logs\multi_run_20260314_135628.log
+2026-03-14 13:56:28 | INFO | multi_categories | Multi-category run started with config=categories.json
+2026-03-14 13:56:28 | INFO | multi_categories | === Starting category: Electronics ===
+2026-03-14 13:56:28 | INFO | multi_categories | Category Electronics: review=dataset\Electronics.jsonl meta=dataset\meta_Electronics.jsonl output_parquet=output\dev_Electronics.parquet
+2026-03-14 13:57:58 | INFO | multi_categories | Category Electronics: load completed in 90.68s
+2026-03-14 13:57:58 | INFO | multi_categories | Category Electronics: filter completed in 0.02s
+2026-03-14 14:25:59 | INFO | multi_categories | Category Electronics: to_parquet completed in 1680.68s
+2026-03-14 14:25:59 | INFO | multi_categories | Category Electronics: DONE in 1771.38s
+2026-03-14 14:25:59 | INFO | multi_categories | Category Electronics: timings written to output\timings_Electronics.json
+2026-03-14 14:25:59 | INFO | multi_categories | Deleted input file: dataset\Electronics.jsonl
+2026-03-14 14:25:59 | INFO | multi_categories | Deleted input file: dataset\meta_Electronics.jsonl
+2026-03-14 14:26:23 | INFO | multi_categories | === Starting category: Tools_and_Home_Improvement ===
+2026-03-14 14:26:23 | INFO | multi_categories | Category Tools_and_Home_Improvement: review=dataset\Tools_and_Home_Improvement.jsonl meta=dataset\meta_Tools_and_Home_Improvement.jsonl output_parquet=output\dev_Tools_and_Home_Improvement.parquet
+2026-03-14 14:27:31 | INFO | multi_categories | Category Tools_and_Home_Improvement: load completed in 67.31s
+2026-03-14 14:27:31 | INFO | multi_categories | Category Tools_and_Home_Improvement: filter completed in 0.02s
+2026-03-14 14:39:11 | INFO | multi_categories | Category Tools_and_Home_Improvement: to_parquet completed in 699.99s
+2026-03-14 14:39:11 | INFO | multi_categories | Category Tools_and_Home_Improvement: DONE in 767.33s
+2026-03-14 14:39:11 | INFO | multi_categories | Category Tools_and_Home_Improvement: timings written to output\timings_Tools_and_Home_Improvement.json
+2026-03-14 14:39:11 | INFO | multi_categories | Deleted input file: dataset\Tools_and_Home_Improvement.jsonl
+2026-03-14 14:39:11 | INFO | multi_categories | Deleted input file: dataset\meta_Tools_and_Home_Improvement.jsonl
+2026-03-14 14:39:32 | INFO | multi_categories | Multi-run summary written to output\timings_multi_summary.json
+2026-03-14 14:39:32 | INFO | multi_categories | Multi-category run completed successfully.
