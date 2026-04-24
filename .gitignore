@@ -1,0 +1,4 @@
+models/*.pkl
+output/*
+**/__pycache__/**
+models/__pycache__/recommender.cpython-312.pyc
