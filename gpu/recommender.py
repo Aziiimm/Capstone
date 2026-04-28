@@ -21,6 +21,7 @@ from dataclasses import dataclass
 from typing import Dict, Iterable, List, Optional
 
 import numpy as np
+from time import perf_counter
 
 try:  # Optional GPU stack
     import cudf
@@ -47,6 +48,40 @@ def _require_rapids() -> None:
             "`pip install cudf-cu12 dask-cudf-cu12 cuml-cu12` "
             "or use the official RAPIDS conda images."
         )
+
+
+def get_gpu_device_name() -> str:
+    _require_rapids()
+    props = cp.cuda.runtime.getDeviceProperties(0)
+    name = props.get("name", b"")
+    if isinstance(name, (bytes, bytearray)):
+        return name.decode("utf-8", errors="replace")
+    return str(name)
+
+
+def pick_any_reviewer_id(gdf: "cudf.DataFrame", limit: int = 1000) -> Optional[str]:
+    """Pick a valid `reviewerID` from a cuDF interactions frame, for demos/tests."""
+    _require_rapids()
+    if "reviewerID" not in gdf.columns:
+        return None
+    series = gdf["reviewerID"].head(limit).dropna().astype("str").drop_duplicates()
+    if len(series) == 0:
+        return None
+    return str(series.iloc[0])
+
+
+def _topk_indices(scores: "cp.ndarray", k: int) -> "cp.ndarray":
+    """Return indices of top-k scores (descending), computed on GPU."""
+    _require_rapids()
+    k = int(k)
+    if k <= 0:
+        return cp.asarray([], dtype=cp.int64)
+    n = int(scores.size)
+    if n == 0:
+        return cp.asarray([], dtype=cp.int64)
+    k = min(k, n)
+    idx = cp.argpartition(scores, -k)[-k:]
+    return idx[cp.argsort(scores[idx])[::-1]]
 
 
 def load_interactions_parquet(path: str) -> "cudf.DataFrame":
@@ -97,6 +132,7 @@ class GpuKnnRecommender:
         min_rating: float = 1.0,
         n_neighbors: int = 20,
         metric: str = "cosine",
+        timings: Optional[Dict[str, float]] = None,
     ) -> "GpuKnnRecommender":
         """
         Build a GPU KNN model from a Parquet file of interactions.
@@ -111,9 +147,16 @@ class GpuKnnRecommender:
             Number of neighbor users to search in cuML.
         metric:
             Distance metric for cuML NearestNeighbors (e.g. 'cosine', 'euclidean').
+        timings:
+            Optional dict populated with timing seconds for key steps.
         """
         _require_rapids()
+        t0 = perf_counter()
         gdf = load_interactions_parquet(path)
+        if timings is not None:
+            timings["load_parquet_s"] = perf_counter() - t0
+
+        t1 = perf_counter()
         gdf = gdf[gdf["rating"] >= min_rating]
 
         # Map arbitrary user/item IDs to contiguous integer indices using cuDF categories.
@@ -132,13 +175,19 @@ class GpuKnnRecommender:
         item_idx = gdf["item_code"].values
         ratings = gdf["rating"].astype("float32").values
         mat[user_idx, item_idx] = ratings
+        if timings is not None:
+            timings["build_dense_matrix_s"] = perf_counter() - t1
 
         # Fit cuML KNN on the user vectors.
+        t2 = perf_counter()
         knn = NearestNeighbors(n_neighbors=n_neighbors, metric=metric)
         knn.fit(mat)
+        if timings is not None:
+            timings["fit_knn_s"] = perf_counter() - t2
 
         # Build Python mappings for external IDs <-> indices (host-side dicts).
         # The .cat.categories is a GPU Series; convert to host to store in dicts.
+        t3 = perf_counter()
         user_cats = gdf[["reviewerID", "user_code"]].drop_duplicates().to_pandas()
         item_cats = gdf[["asin", "item_code"]].drop_duplicates().to_pandas()
 
@@ -150,6 +199,8 @@ class GpuKnnRecommender:
             int(row["item_code"]): str(row["asin"])
             for _, row in item_cats.iterrows()
         }
+        if timings is not None:
+            timings["build_mappings_s"] = perf_counter() - t3
 
         return cls(
             user_item_matrix=mat,
@@ -166,6 +217,7 @@ class GpuKnnRecommender:
         user_id: str,
         top_k: int = 10,
         exclude_seen: bool = True,
+        timings: Optional[Dict[str, float]] = None,
     ) -> List[str]:
         """
         Recommend top-K items for a given user ID.
@@ -178,6 +230,8 @@ class GpuKnnRecommender:
             Number of items to return.
         exclude_seen:
             If True, do not recommend items the user has already interacted with.
+        timings:
+            Optional dict populated with timing seconds for key steps.
         """
         _require_rapids()
         idx = self._get_user_index(user_id)
@@ -187,7 +241,10 @@ class GpuKnnRecommender:
 
         user_vec = self.user_item_matrix[idx : idx + 1]
         # Get neighbor users (including the user itself at position 0).
+        t0 = perf_counter()
         _distances, indices = self.knn.kneighbors(user_vec)
+        if timings is not None:
+            timings["kneighbors_s"] = perf_counter() - t0
         neighbor_indices = indices[0]
 
         # Drop self-neighbor (assumed to be at index 0).
@@ -197,19 +254,29 @@ class GpuKnnRecommender:
 
         neighbor_ratings = self.user_item_matrix[neighbor_indices]
         # Simple neighborhood aggregation: mean rating per item.
+        t1 = perf_counter()
         scores = neighbor_ratings.mean(axis=0)
+        if timings is not None:
+            timings["aggregate_scores_s"] = perf_counter() - t1
 
         if exclude_seen:
             seen_mask = self.user_item_matrix[idx] > 0
             scores = cp.where(seen_mask, -cp.inf, scores)
 
-        # Get top-K item indices by score.
-        score_np = cp.asnumpy(scores)
-        top_idx = np.argsort(score_np)  # ascending
-        # Filter out items with -inf scores, then take top_k in descending order.
-        top_idx = [int(i) for i in top_idx if np.isfinite(score_np[i])][-top_k:][::-1]
+        t2 = perf_counter()
+        top_idx_gpu = _topk_indices(scores, top_k)
+        if timings is not None:
+            timings["topk_s"] = perf_counter() - t2
 
-        return [self.idx_to_item[i] for i in top_idx]
+        if int(top_idx_gpu.size) == 0:
+            return []
+
+        # Filter any -inf (can happen when user has seen nearly everything).
+        finite_mask = cp.isfinite(scores[top_idx_gpu])
+        top_idx_gpu = top_idx_gpu[finite_mask]
+
+        top_idx = cp.asnumpy(top_idx_gpu).tolist()
+        return [self.idx_to_item[int(i)] for i in top_idx]
 
 
 def batch_recommend(

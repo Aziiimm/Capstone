@@ -1,0 +1,84 @@
+GPU recommender optimization summary
+===================================
+
+Goal
+----
+The goal was to optimize the recommender for GPU use and make the work easy to
+demo for the project.
+
+TODO tasks chosen
+-----------------
+1. Keep recommendation ranking on the GPU to reduce CPU/GPU transfer overhead.
+2. Add a simple demo and smoke test so the project can prove it is using the GPU.
+
+What was changed
+----------------
+1. Updated gpu/recommender.py
+   - Added GPU helper functions:
+     - get_gpu_device_name(): returns the CUDA device name.
+     - pick_any_reviewer_id(): automatically selects a valid reviewerID from the
+       parquet file for demos/tests.
+     - _topk_indices(): computes top-K item indices directly on the GPU.
+   - Optimized recommend_for_user():
+     - Before: the code moved the full scores array from GPU to CPU and used
+       NumPy sorting on the CPU.
+     - After: the code now does top-K selection and sorting on the GPU with
+       CuPy, then transfers only the final small list of indices back to CPU.
+     - This reduces unnecessary data movement and is better for inference speed.
+   - Added optional timing dictionaries to:
+     - from_parquet()
+     - recommend_for_user()
+     These collect timing information for loading, matrix building, KNN fitting,
+     neighbor lookup, score aggregation, and top-K ranking.
+
+2. Added gpu/run_knn.py
+   - New CLI entry point for the GPU recommender.
+   - Example usage:
+     python -m gpu.run_knn --parquet output/sample.parquet --top-k 10
+   - Features:
+     - prints GPU device name
+     - builds the recommender
+     - auto-selects a user if one is not provided
+     - prints recommendations
+     - prints timing information
+     - can save timings to JSON
+
+3. Added scripts/gpu_smoke_test.py
+   - New one-command smoke test for the GPU recommender.
+   - Example usage:
+     python scripts/gpu_smoke_test.py --parquet output/sample.parquet
+   - This script:
+     - prints the GPU device name
+     - loads parquet data
+     - builds the GPU KNN recommender
+     - picks a valid reviewerID automatically
+     - runs one recommendation request
+     - prints timings
+
+Why these changes matter
+------------------------
+- The previous GPU implementation still had a CPU bottleneck during ranking.
+- The new version keeps more of the recommendation work on the GPU.
+- The new scripts make it easier to show your instructor/team that:
+  - RAPIDS is being used
+  - the recommender is running on the GPU
+  - timing data can be collected for comparison
+
+What was verified
+-----------------
+- The new Python files compile successfully with:
+  python -m py_compile gpu/recommender.py gpu/run_knn.py scripts/gpu_smoke_test.py
+- Lint check showed no errors in the edited files.
+
+Important note
+--------------
+The GPU code requires RAPIDS libraries such as cudf, cupy, and cuml. On Windows,
+this usually means running in WSL2 or a Linux GPU environment.
+
+How to run
+----------
+Smoke test:
+python scripts/gpu_smoke_test.py --parquet output/sample.parquet --top-k 10 --neighbors 20
+
+CLI demo:
+python -m gpu.run_knn --parquet output/sample.parquet --top-k 10 --neighbors 20
