@@ -21,8 +21,12 @@ MIN_REVIEWS_PER_ITEM = 11
 
 def filter_counts(
     df: Union[dd.DataFrame, pd.DataFrame, "dask_cudf.DataFrame", "cudf.DataFrame"],
+    min_reviews_per_user: int | None = None,
+    min_reviews_per_item: int | None = None,
 ) -> Union[dd.DataFrame, pd.DataFrame, "dask_cudf.DataFrame", "cudf.DataFrame"]:
-    """Keep only rows where user has >= 6 reviews and item has >= 11 reviews."""
+    """Keep only rows where user/item meet minimum review counts (defaults: project thresholds)."""
+    min_u = MIN_REVIEWS_PER_USER if min_reviews_per_user is None else min_reviews_per_user
+    min_i = MIN_REVIEWS_PER_ITEM if min_reviews_per_item is None else min_reviews_per_item
     is_dask = isinstance(df, dd.DataFrame)
 
     if is_dask:
@@ -35,8 +39,7 @@ def filter_counts(
             df = df.merge(item_counts, left_on="asin", right_index=True, how="inner")
             
             # 3. Filter
-            df = df[(df["_user_count"] >= MIN_REVIEWS_PER_USER) & 
-                    (df["_item_count"] >= MIN_REVIEWS_PER_ITEM)]
+            df = df[(df["_user_count"] >= min_u) & (df["_item_count"] >= min_i)]
             
             df = df.drop(columns=["_user_count", "_item_count"])
             
@@ -50,6 +53,6 @@ def filter_counts(
     item_counts = df.groupby("asin").size().rename("_ic")
     df = df.merge(user_counts, left_on="reviewerID", right_index=True)
     df = df.merge(item_counts, left_on="asin", right_index=True)
-    df = df[df["_uc"] >= MIN_REVIEWS_PER_USER]
-    df = df[df["_ic"] >= MIN_REVIEWS_PER_ITEM]
+    df = df[df["_uc"] >= min_u]
+    df = df[df["_ic"] >= min_i]
     return df.drop(columns=["_uc", "_ic"])

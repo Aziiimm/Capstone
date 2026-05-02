@@ -1,113 +1,126 @@
-import cudf
-import rmm
-import pickle
-import os
+"""Train item–item kNN recommender on Parquet (CPU sklearn or GPU cuML)."""
+from __future__ import annotations
+
 import argparse
-import glob
-import pandas as pd
-from cuml.neighbors import NearestNeighbors
-from cupyx.scipy.sparse import coo_matrix
-from recommender import AmazonRecommenderGPU
+import os
+import pickle
+import sys
+from pathlib import Path
 
-def main():
-    parser = argparse.ArgumentParser(description="Train cuML Recommender using Integer-First strategy.")
-    parser.add_argument("--path", type=str, required=True, help="Path with wildcard (e.g., 'output/*.parquet')")
-    parser.add_argument("--neighbors", type=int, default=5, help="Number of neighbors for the model")
-    parser.add_argument("--output", type=str, default="models/full_recommender.pkl", help="Save path")
-    args = parser.parse_args()
+_MODEL_DIR = Path(__file__).resolve().parent
+if str(_MODEL_DIR) not in sys.path:
+    sys.path.insert(0, str(_MODEL_DIR))
 
+from build_matrix import build_matrix_from_parquet
+from recommender_cpu import AmazonRecommenderCPU
+from sklearn.neighbors import NearestNeighbors as SKNearestNeighbors
+
+
+def _train_cpu(artifacts, n_neighbors: int) -> AmazonRecommenderCPU:
+    model = SKNearestNeighbors(
+        n_neighbors=n_neighbors,
+        metric="cosine",
+        algorithm="brute",
+    )
+    model.fit(artifacts.sparse_csr)
+    return AmazonRecommenderCPU(model, artifacts.sparse_csr, artifacts.title_map)
+
+
+def _train_gpu(artifacts, n_neighbors: int, rmm_pool_gb: float):
+    import rmm
+    import cupyx.scipy.sparse as cpsparse
+    from cuml.neighbors import NearestNeighbors as CUNearestNeighbors
+
+    from recommender import AmazonRecommenderGPU
+
+    pool_bytes = max(int(rmm_pool_gb * 1e9), 256_000_000)
     rmm.reinitialize(
         pool_allocator=True,
-        initial_pool_size=int(20e9), 
-        managed_memory=True
+        initial_pool_size=pool_bytes,
+        managed_memory=True,
+    )
+    sparse_gpu = cpsparse.csr_matrix(artifacts.sparse_csr)
+    model = CUNearestNeighbors(n_neighbors=n_neighbors, metric="cosine")
+    model.fit(sparse_gpu)
+    return AmazonRecommenderGPU(model, sparse_gpu, artifacts.title_map)
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="Train Amazon item–item kNN recommender (CPU or GPU)."
+    )
+    parser.add_argument(
+        "--path",
+        type=str,
+        required=True,
+        help="Glob for Parquet files (e.g. 'output/dev_*.parquet')",
+    )
+    parser.add_argument("--neighbors", type=int, default=10, help="k for kNN")
+    parser.add_argument(
+        "--output",
+        type=str,
+        default="models/full_recommender.pkl",
+        help="Pickle output path",
+    )
+    parser.add_argument(
+        "--device",
+        choices=("cpu", "gpu"),
+        default="cpu",
+        help="cpu = sklearn; gpu = cuML (requires RAPIDS)",
+    )
+    parser.add_argument(
+        "--rmm-pool-gb",
+        type=float,
+        default=2.0,
+        help="RMM initial pool size in GB (GPU only). Lower for 6GB cards.",
+    )
+    parser.add_argument(
+        "--min-user-reviews",
+        type=int,
+        default=1,
+        help="Drop users with fewer reviews after load (1 = no extra filter).",
+    )
+    parser.add_argument(
+        "--min-item-reviews",
+        type=int,
+        default=1,
+        help="Drop items with fewer reviews after load (1 = no extra filter).",
+    )
+    parser.add_argument(
+        "--rating-mode",
+        choices=("raw", "binary"),
+        default="raw",
+        help="binary = implicit 1/0 from rating sign (often improves sparse signals).",
+    )
+    args = parser.parse_args()
+
+    print(f"Loading matrix from glob: {args.path}")
+    artifacts = build_matrix_from_parquet(
+        args.path,
+        min_reviews_per_user=args.min_user_reviews,
+        min_reviews_per_item=args.min_item_reviews,
+        rating_mode=args.rating_mode,
+    )
+    print(
+        f"  users={artifacts.n_users:,} items={artifacts.n_items:,} nnz={artifacts.nnz:,}"
     )
 
-    print(f"Resolving path: {args.path}")
-    input_dirs = glob.glob(args.path)
-    
-    if not input_dirs:
-        print(f"Error: No directories found matching '{args.path}'.")
-        return
+    if args.device == "cpu":
+        print(f"Training sklearn NearestNeighbors (k={args.neighbors})...")
+        recommender = _train_cpu(artifacts, args.neighbors)
+    else:
+        print(f"Training cuML NearestNeighbors (k={args.neighbors})...")
+        recommender = _train_gpu(artifacts, args.neighbors, args.rmm_pool_gb)
 
-    # Phase 1: Build Global Unique Sets for User and Item IDs
-    print("Phase 1: Building global mapping for Reviewers and ASINs...")
-    all_reviewers = []
-    all_asins = []
-    all_titles_cpu = []
+    out_dir = os.path.dirname(args.output)
+    if out_dir:
+        os.makedirs(out_dir, exist_ok=True)
 
-    for d in input_dirs:
-        print(f"  Scanning directory for unique IDs: {d}")
-        # Only load the columns we need to build the map to save VRAM
-        temp_df = cudf.read_parquet(d, columns=['reviewerID', 'asin', 'product_title'])
-        
-        all_reviewers.append(temp_df['reviewerID'].unique())
-        all_asins.append(temp_df['asin'].unique())
-        
-        # Save titles to CPU now while we have the file open
-        titles_subset = temp_df[['asin', 'product_title']].drop_duplicates().to_pandas()
-        all_titles_cpu.append(titles_subset)
-        
-        del temp_df # Clear GPU memory for next file
-
-    # Combine and get global unique codes
-    global_user_map = cudf.concat(all_reviewers).unique().reset_index(drop=True)
-    global_user_map['user_idx'] = global_user_map.index
-    
-    global_item_map = cudf.concat(all_asins).unique().reset_index(drop=True)
-    global_item_map['item_idx'] = global_item_map.index
-
-    print(f"Found {len(global_user_map):,} unique users and {len(global_item_map):,} unique items.")
-
-    # Phase 2: Load and Transform to Integers
-    print("Phase 2: Converting data to integers and stacking...")
-    dfs = []
-    for d in input_dirs:
-        print(f"  Processing: {d}")
-        temp_df = cudf.read_parquet(d, columns=['reviewerID', 'asin', 'rating'])
-        
-        # Merge with our global maps to get the integer codes
-        temp_df = temp_df.merge(global_user_map, on='reviewerID', how='left')
-        temp_df = temp_df.merge(global_item_map, on='asin', how='left')
-        
-        # Drop the strings immediately!
-        temp_df = temp_df.drop(columns=['reviewerID', 'asin'])
-        dfs.append(temp_df)
-
-    # Now concat will work because it's only numbers (int64/float32)
-    df = cudf.concat(dfs)
-    del dfs
-
-    # Phase 3: Build Matrix and Train
-    n_users = len(global_user_map)
-    n_items = len(global_item_map)
-
-    print(f"Building sparse matrix: {n_items} items x {n_users} users...")
-    sparse_matrix = coo_matrix(
-        (df['rating'].values, (df['item_idx'].values, df['user_idx'].values)),
-        shape=(n_items, n_users)
-    ).tocsr()
-
-    print(f"Training NearestNeighbors (k={args.neighbors})...")
-    model = NearestNeighbors(n_neighbors=args.neighbors, metric='cosine')
-    model.fit(sparse_matrix)
-
-    # Phase 4: Final Mapping for the Pickle
-    print("Building global title map...")
-    full_titles_df = pd.concat(all_titles_cpu).drop_duplicates(subset=['asin'])
-    # Merge titles with our global item index
-    item_map_cpu = global_item_map.to_pandas()
-    final_mapping = full_titles_df.merge(item_map_cpu, on='asin')
-    title_map_dict = final_mapping.set_index('item_idx')['product_title'].to_dict()
-
-    recommender = AmazonRecommenderGPU(model, sparse_matrix, title_map_dict)
-    
-    if os.path.dirname(args.output):
-        os.makedirs(os.path.dirname(args.output), exist_ok=True)
-        
-    with open(args.output, 'wb') as f:
+    with open(args.output, "wb") as f:
         pickle.dump(recommender, f)
 
-    print(f"SUCCESS: Global model saved to {args.output}")
+    print(f"SUCCESS: saved recommender ({args.device}) -> {args.output}")
+
 
 if __name__ == "__main__":
     main()

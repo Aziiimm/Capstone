@@ -1,0 +1,68 @@
+CAPSTONE — AMAZON RECOMMENDER: IMPLEMENTATION STEPS (GPU vs CPU, small scale, higher accuracy)
+================================================================================
+Use this list one-by-one; check off each line when done.
+
+PHASE A — BASELINE & CONFIG
+--------------------------------------------------------------------------------
+[x] A1. Freeze a tiny reproducible dataset: output/dev_synthetic.parquet via data/generate_synthetic_parquet.py OR pipeline Parquet under output/dev_<category>.parquet.
+[x] A2. benchmark_config.json documents parquet_glob, neighbors, rmm_pool_gb, rating_mode.
+[x] A3. models/new_model.py: --rmm-pool-gb (GPU), --device cpu|gpu, --min-user-reviews, --min-item-reviews, --rating-mode.
+
+PHASE B — GPU VS CPU SPEED (FAIR COMPARISON)
+--------------------------------------------------------------------------------
+[x] B1. Same Parquet → build_matrix.build_matrix_from_parquet → same CSR.
+[x] B2. CPU: models/recommender_cpu.py (sklearn NearestNeighbors, cosine, brute).
+[x] B3. GPU: cuML NearestNeighbors in models/new_model.py _train_gpu (cupyx CSR).
+[x] B4. models/benchmark_cpu_gpu.py: fit + inference timing, GPU warmup, broad Exception if RAPIDS missing.
+[x] B5. Prints users, items, nnz, k, query count, mean inference ms.
+
+PHASE C — SMALL SCALE (LIMITED VRAM)
+--------------------------------------------------------------------------------
+[x] C1. data/load.py limit= unchanged; pipeline --limit still works.
+[x] C2. data/filter.py filter_counts(..., min_reviews_per_user=, min_reviews_per_item=); data/run_pipeline.py --min-user-reviews / --min-item-reviews.
+[x] C3. Tune --neighbors on new_model.py / evaluate_recommender.py.
+
+PHASE D — ACCURACY (DEFINE THEN IMPROVE)
+--------------------------------------------------------------------------------
+[x] D1–D3. models/evaluate_recommender.py: HitRate@K, Precision@K, NDCG@K (temporal hold-out, train-only matrix).
+[x] D4. --rating-mode binary vs raw on build/train/eval.
+[ ] D5. (Optional) ALS / MF beyond item-item kNN — not implemented.
+
+PHASE E — VERIFY IN TERMINAL
+--------------------------------------------------------------------------------
+[ ] E1. GPU stack (needs conda RAPIDS): python -c "import cudf, cupy; from cuml.neighbors import NearestNeighbors"
+[x] E2. Train CPU: python models/new_model.py --path output/dev_synthetic.parquet --device cpu --output models/dev_recommender.pkl
+[ ] E2-GPU. Train GPU: same with --device gpu --rmm-pool-gb 2 (after RAPIDS install).
+[x] E3. Inference: python models/inference.py --model models/dev_recommender.pkl
+
+LAST ACCURACY RUN (synthetic data: 300 users, 150 items — random-ish ratings; NOT Amazon benchmark quality)
+--------------------------------------------------------------------------------
+Command: python models/evaluate_recommender.py --path output/dev_synthetic.parquet --neighbors 10 --k-eval 10
+
+  rating_mode=raw:    HitRate@10 0.0667  Precision@10 0.0067  NDCG@10 0.0285  (300 test users)
+  rating_mode=binary: HitRate@10 0.0833  Precision@10 0.0083  NDCG@10 0.0378
+
+GPU vs CPU accuracy: same algorithm (cosine kNN on identical CSR) → identical rankings; evaluate_recommender.py runs sklearn on CPU for reproducibility without RAPIDS.
+
+LAST BENCHMARK RUN (this machine)
+--------------------------------------------------------------------------------
+CPU fit ~0.0004 s, inference mean ~0.78 ms (20 queries, k=10) on synthetic Parquet.
+GPU (cuML): skipped — ModuleNotFoundError: rmm (install RAPIDS in conda to enable).
+
+TERMINAL GPU CHECK LOG (historical)
+--------------------------------------------------------------------------------
+nvidia-smi previously OK (GTX 1660 6 GB). System Python lacks cudf/cuml; use conda env for GPU training/benchmark GPU section.
+
+QUICK COMMANDS
+--------------------------------------------------------------------------------
+  python data/generate_synthetic_parquet.py --output output/dev_synthetic.parquet
+  python models/evaluate_recommender.py --path output/dev_synthetic.parquet --neighbors 10 --k-eval 10
+  python models/benchmark_cpu_gpu.py --path output/dev_synthetic.parquet
+  python models/new_model.py --path output/dev_synthetic.parquet --device cpu --output models/dev_recommender.pkl
+  python models/inference.py --model models/dev_recommender.pkl
+  python -m pytest tests/test_build_matrix.py -q
+
+NOTES
+--------------------------------------------------------------------------------
+- Real Amazon Parquet (after pipeline + filter) will change metrics; tune neighbors and rating-mode.
+- models/build_matrix.py centralizes Parquet → CSR for CPU GPU and evaluation.

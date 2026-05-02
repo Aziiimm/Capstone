@@ -1,0 +1,7 @@
+{
+  "parquet_glob": "output/dev_synthetic.parquet",
+  "neighbors": 10,
+  "rmm_pool_gb": 2.0,
+  "rating_mode": "raw",
+  "notes": "Replace parquet_glob with your pipeline output (e.g. output/dev_Tools*.parquet). Use --limit on run_pipeline for smaller scales."
+}

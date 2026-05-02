@@ -60,6 +60,18 @@ def main() -> None:
         default=None,
         help="Optional: write stage timings (seconds) to this JSON file for comparison across runs.",
     )
+    parser.add_argument(
+        "--min-user-reviews",
+        type=int,
+        default=None,
+        help="Override min reviews per user for filter_counts (default: 6).",
+    )
+    parser.add_argument(
+        "--min-item-reviews",
+        type=int,
+        default=None,
+        help="Override min reviews per item for filter_counts (default: 11).",
+    )
     args = parser.parse_args()
 
     if args.gpu and HAS_RMM:
@@ -91,7 +103,11 @@ def main() -> None:
     # Stage 2: Filter
     t0 = time.perf_counter()
     print("Filtering (user >= 6 reviews, item >= 11 reviews)...")
-    ddf = filter_counts(ddf)
+    ddf = filter_counts(
+        ddf,
+        min_reviews_per_user=args.min_user_reviews,
+        min_reviews_per_item=args.min_item_reviews,
+    )
     timings["filter_s"] = time.perf_counter() - t0
     print(f"  Filter: {timings['filter_s']:.2f}s")
 
