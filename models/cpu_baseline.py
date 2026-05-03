@@ -181,18 +181,29 @@ def run(
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="SVD recommender")
-    p.add_argument("--input", required=True)
+    p.add_argument("--input", default=None,
+                   help="Path to sentiment parquet (required unless --infer-only)")
     p.add_argument("--category", required=True)
     p.add_argument("--output-dir", default="output")
     p.add_argument("--model-dir", default="models/saved")
     p.add_argument("--demo-user", default=None,
-                   help="After training, print top-10 recs for this user ID")
+                   help="Print top-10 recs for this user ID")
+    p.add_argument("--infer-only", action="store_true",
+                   help="Load trained model and infer")
     return p.parse_args()
 
 
 def main() -> None:
     args = parse_args()
-    run(args.input, args.category, args.output_dir, args.model_dir)
+
+    if args.infer_only:
+        if not args.demo_user:
+            raise ValueError("--infer-only requires --demo-user to be set")
+        log.info("Skipping training — loading existing model for %s", args.category)
+    else:
+        if not args.input:
+            raise ValueError("--input is required unless --infer-only is set")
+        run(args.input, args.category, args.output_dir, args.model_dir)
 
     if args.demo_user:
         prefix = str(Path(args.model_dir) / args.category)
