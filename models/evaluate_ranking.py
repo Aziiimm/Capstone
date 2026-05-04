@@ -3,14 +3,15 @@ Offline ranking metrics for the item–item kNN recommender (same logic as recom
 
 Trains *only* on a train split of interactions, then asks: for a held-out item the user
 interacted with, does that item appear in the top-K recommendations built from the user’s
-train history? Report Hit Rate@K (and optional MRR).
+train history? Report Hit Rate@K and MRR.
 
-Uses sklearn + SciPy (CPU). Algorithm matches training in new_model.py / recommender_cpu;
-cuML can differ slightly in tie-breaking but trends should align.
+Also supports --split temporal (requires timestamp in Parquet) and popularity / random
+baselines on the same evaluation cases.
 
 Example:
   cd models
   python evaluate_ranking.py --parquet ../output/tools_gpu_50k.parquet --top-k 10 --seed 42
+  python evaluate_ranking.py --parquet ../output/foo.parquet --split temporal --top-k 10
 """
 from __future__ import annotations
 
@@ -29,12 +30,26 @@ _MODEL_DIR = Path(__file__).resolve().parent
 if str(_MODEL_DIR) not in sys.path:
     sys.path.insert(0, str(_MODEL_DIR))
 
+from neighbor_merge import merge_knn_scores
+
 
 def _resolve_parquet_paths(pattern: str) -> list[str]:
     paths = sorted(glob.glob(pattern))
     if not paths:
         raise SystemExit(f"No files matched: {pattern}")
     return paths
+
+
+def _parquet_columns(paths: list[str]) -> list[str]:
+    """Columns present in the first file (for optional timestamp)."""
+    s = pd.read_parquet(paths[0])
+    return list(s.columns)
+
+
+def _parquet_names(path: str) -> set[str]:
+    import pyarrow.parquet as pq
+
+    return set(pq.read_schema(path).names)
 
 
 def _build_maps(df: pd.DataFrame) -> tuple[dict, dict, dict, dict]:
@@ -69,16 +84,46 @@ def _recommend_item_indices(
     history_item_idx: list[int],
     top_k: int,
 ) -> list[int]:
-    """Mirror recommender_cpu.recommend index selection (ravel + slice)."""
     if not history_item_idx:
         return []
     q = np.asarray(history_item_idx, dtype=np.int64)
-    _, indices = model.kneighbors(mat[q])
-    flat = indices.ravel()
-    out: list[int] = []
-    for idx in flat[1 : top_k + 1]:
-        out.append(int(idx))
-    return out
+    distances, indices = model.kneighbors(mat[q])
+    return merge_knn_scores(distances, indices, q, top_k)
+
+
+def _asins_ordered_temporal(udf: pd.DataFrame) -> list[str]:
+    """Unique ASINs ordered by last interaction time (ascending → oldest first)."""
+    ts_col = "timestamp"
+    if ts_col not in udf.columns:
+        raise ValueError("timestamp column missing")
+    g = udf[["asin", ts_col]].dropna(subset=[ts_col])
+    if g.empty:
+        return []
+    last_ts = g.groupby("asin", as_index=False)[ts_col].max()
+    last_ts = last_ts.sort_values(ts_col)
+    return last_ts["asin"].astype(str).tolist()
+
+
+def _accumulate_metrics(
+    eval_cases: list[tuple[str, str, list[str]]],
+    item_to_idx: dict,
+    top_k: int,
+    recommend_fn,
+) -> tuple[int, float, int]:
+    hits = 0
+    rr_sum = 0.0
+    n = 0
+    for _, held_asin, train_asins in eval_cases:
+        hist_idx = [item_to_idx[a] for a in train_asins if a in item_to_idx]
+        held_idx = item_to_idx.get(held_asin)
+        if held_idx is None or not hist_idx:
+            continue
+        rec_idx = recommend_fn(hist_idx, held_idx, train_asins)
+        n += 1
+        if held_idx in rec_idx:
+            hits += 1
+            rr_sum += 1.0 / (rec_idx.index(held_idx) + 1)
+    return hits, rr_sum, n
 
 
 def main() -> None:
@@ -89,6 +134,12 @@ def main() -> None:
         "--parquet",
         required=True,
         help="Parquet file or glob (e.g. ../output/part.*.parquet)",
+    )
+    parser.add_argument(
+        "--split",
+        choices=("random", "temporal"),
+        default="random",
+        help="random: shuffle user items; temporal: hold out most-recent fraction (needs timestamp).",
     )
     parser.add_argument("--test-fraction", type=float, default=0.2, help="Per-user held-out fraction")
     parser.add_argument("--top-k", type=int, default=10)
@@ -106,26 +157,52 @@ def main() -> None:
         default=3,
         help="Users need at least this many distinct items to be evaluated",
     )
+    parser.add_argument(
+        "--no-center-users",
+        action="store_true",
+        help="Disable per-user mean subtraction on train ratings (default: center, matches new_model.py).",
+    )
+    parser.add_argument(
+        "--skip-baselines",
+        action="store_true",
+        help="Skip popularity and random baselines (faster).",
+    )
     args = parser.parse_args()
 
     rng = random.Random(args.seed)
     np.random.seed(args.seed)
 
     paths = _resolve_parquet_paths(args.parquet)
-    dfs = [pd.read_parquet(p, columns=["reviewerID", "asin", "rating"]) for p in paths]
+    cols = _parquet_columns(paths)
+    read_cols = ["reviewerID", "asin", "rating"]
+    if args.split == "temporal":
+        if "timestamp" not in cols:
+            raise SystemExit(
+                "Temporal split requires column 'timestamp' in Parquet. "
+                "Use --split random or rebuild pipeline output with timestamp."
+            )
+        read_cols.append("timestamp")
+
+    dfs = []
+    for p in paths:
+        names = _parquet_names(p)
+        use = [c for c in read_cols if c in names]
+        dfs.append(pd.read_parquet(p, columns=use))
     df = pd.concat(dfs, ignore_index=True)
     df = df.dropna(subset=["reviewerID", "asin"])
+
+    if args.split == "temporal" and "timestamp" not in df.columns:
+        raise SystemExit("Temporal split: timestamp column not found after loading Parquet.")
 
     user_to_idx, item_to_idx, _, _ = _build_maps(df)
     n_users = len(user_to_idx)
     n_items = len(item_to_idx)
 
-    # Per-user: distinct items (one interaction per user-item pair if duplicates, keep one rating — mean optional)
-    user_items: dict[str, list[str]] = {}
+    user_items: dict = {}
     for uid, grp in df.groupby("reviewerID"):
         asins = grp["asin"].drop_duplicates().tolist()
         if len(asins) >= args.min_user_items:
-            user_items[str(uid)] = asins
+            user_items[uid] = asins
 
     users_list = list(user_items.keys())
     rng.shuffle(users_list)
@@ -136,22 +213,38 @@ def main() -> None:
     eval_cases: list[tuple[str, str, list[str]]] = []
 
     for uid in users_list:
-        items = list(user_items[uid])
-        rng.shuffle(items)
-        n_hold = max(1, int(len(items) * args.test_fraction))
-        test_asins = items[:n_hold]
-        train_asins = items[n_hold:]
+        udf = df[df["reviewerID"] == uid]
+
+        if args.split == "temporal":
+            ordered = _asins_ordered_temporal(udf)
+            if len(ordered) < args.min_user_items:
+                continue
+        else:
+            items = list(user_items[uid])
+            rng.shuffle(items)
+            ordered = items
+
+        n_hold = max(1, int(len(ordered) * args.test_fraction))
+        if n_hold >= len(ordered):
+            n_hold = max(1, len(ordered) - 1)
+
+        if args.split == "temporal":
+            train_asins = ordered[:-n_hold]
+            test_asins = ordered[-n_hold:]
+        else:
+            test_asins = ordered[:n_hold]
+            train_asins = ordered[n_hold:]
+
         if not train_asins:
             continue
-        sub = df[(df["reviewerID"] == uid) & (df["asin"].isin(train_asins))].drop_duplicates(
-            subset=["reviewerID", "asin"]
-        )
+
+        sub = udf[(udf["asin"].isin(train_asins))].drop_duplicates(subset=["reviewerID", "asin"])
         for _, r in sub.iterrows():
             train_rows.append(
                 {"reviewerID": r["reviewerID"], "asin": r["asin"], "rating": float(r["rating"])}
             )
         for held in test_asins:
-            sub_h = df[(df["reviewerID"] == uid) & (df["asin"] == held)]
+            sub_h = udf[udf["asin"] == held]
             if sub_h.empty:
                 continue
             eval_cases.append((uid, held, train_asins))
@@ -160,35 +253,60 @@ def main() -> None:
     if train_df.empty:
         raise SystemExit("No training rows after split; lower --min-user-items or check data.")
 
+    if not args.no_center_users:
+        train_df = train_df.copy()
+        train_df["rating"] = train_df.groupby("reviewerID")["rating"].transform(lambda x: x - x.mean())
+
     mat = _df_to_train_csr(train_df, user_to_idx, item_to_idx, n_users, n_items)
-    # k for kneighbors must be <= n_items and typically > 1
     k_fit = min(max(args.neighbors, 2), max(2, n_items))
     model = NearestNeighbors(n_neighbors=k_fit, metric="cosine")
     model.fit(mat)
 
-    hits = 0
-    rr_sum = 0.0
-    n = 0
-    for uid, held_asin, train_asins in eval_cases:
-        hist_idx = [item_to_idx[a] for a in train_asins if a in item_to_idx]
-        held_idx = item_to_idx.get(held_asin)
-        if held_idx is None or not hist_idx:
-            continue
-        rec_idx = _recommend_item_indices(model, mat, hist_idx, args.top_k)
-        n += 1
-        if held_idx in rec_idx:
-            hits += 1
-            rank = rec_idx.index(held_idx) + 1
-            rr_sum += 1.0 / rank
-        else:
-            rr_sum += 0.0
+    # --- Popularity ranking from train only (asin frequency) ---
+    pop_rank_asins = train_df.groupby("asin").size().sort_values(ascending=False).index.tolist()
 
+    def rec_knn(hist_idx: list[int], _held: int, _train_asins: list[str]) -> list[int]:
+        return _recommend_item_indices(model, mat, hist_idx, args.top_k)
+
+    def rec_popular(hist_idx: list[int], _held: int, train_asins: list[str]) -> list[int]:
+        blocked = {item_to_idx[a] for a in train_asins if a in item_to_idx}
+        out: list[int] = []
+        for a in pop_rank_asins:
+            ix = item_to_idx.get(a)
+            if ix is None or ix in blocked:
+                continue
+            out.append(ix)
+            if len(out) >= args.top_k:
+                break
+        return out
+
+    def rec_random(hist_idx: list[int], _held: int, train_asins: list[str]) -> list[int]:
+        blocked = set(hist_idx)
+        pool = [i for i in range(n_items) if i not in blocked]
+        rng.shuffle(pool)
+        return pool[: args.top_k]
+
+    print(f"Split: {args.split} | Scored neighbor merge: on | User-centered train: {not args.no_center_users}")
+
+    h, rr, n = _accumulate_metrics(eval_cases, item_to_idx, args.top_k, rec_knn)
     if n == 0:
         raise SystemExit("No evaluation cases; increase data or loosen filters.")
 
+    print(f"\n--- kNN (item–item) ---")
     print(f"Cases evaluated: {n}")
-    print(f"Hit Rate@{args.top_k}: {hits / n:.4f}")
-    print(f"MRR@{args.top_k}: {rr_sum / n:.4f}")
+    print(f"Hit Rate@{args.top_k}: {h / n:.4f}")
+    print(f"MRR@{args.top_k}: {rr / n:.4f}")
+
+    if not args.skip_baselines:
+        hp, rrp, _ = _accumulate_metrics(eval_cases, item_to_idx, args.top_k, rec_popular)
+        print(f"\n--- Popularity baseline (train-set frequency, excluding user train items) ---")
+        print(f"Hit Rate@{args.top_k}: {hp / n:.4f}")
+        print(f"MRR@{args.top_k}: {rrp / n:.4f}")
+
+        hr, rrr, _ = _accumulate_metrics(eval_cases, item_to_idx, args.top_k, rec_random)
+        print(f"\n--- Random baseline (uniform among items, excluding user train items) ---")
+        print(f"Hit Rate@{args.top_k}: {hr / n:.4f}")
+        print(f"MRR@{args.top_k}: {rrr / n:.4f}")
 
 
 if __name__ == "__main__":

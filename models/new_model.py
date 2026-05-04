@@ -14,6 +14,11 @@ def main():
     parser = argparse.ArgumentParser(description="Train cuML Recommender using Integer-First strategy.")
     parser.add_argument("--path", type=str, required=True, help="Path with wildcard (e.g., 'output/*.parquet')")
     parser.add_argument("--neighbors", type=int, default=5, help="Number of neighbors for the model")
+    parser.add_argument(
+        "--no-center-users",
+        action="store_true",
+        help="Disable subtracting each user's mean rating before building the matrix (default: center).",
+    )
     parser.add_argument("--output", type=str, default="models/full_recommender.pkl", help="Save path")
     parser.add_argument(
         "--rmm-pool-gb",
@@ -95,6 +100,11 @@ def main():
     # Now concat will work because it's only numbers (int64/float32)
     df = cudf.concat(dfs)
     del dfs
+
+    if not args.no_center_users:
+        print("Applying per-user mean-centering on ratings...")
+        gmeans = df.groupby("user_idx")["rating"].transform("mean")
+        df["rating"] = df["rating"] - gmeans
 
     # Phase 3: Build Matrix and Train
     n_users = len(global_user_map)

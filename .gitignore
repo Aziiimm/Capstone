@@ -39,3 +39,6 @@ Thumbs.db
 .vscode/
 *.swp
 *.swo
+
+# Local improvement write-ups (not tracked in git)
+improvement_logs/

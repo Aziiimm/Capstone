@@ -56,3 +56,24 @@ Suggested implementation order for this repo
 2) Temporal split option in evaluate_ranking.py + popularity/random baselines.
 3) Hyperparameter sweep (neighbors, top-k) logged to a small results table.
 4) Optional ALS or hybrid if course scope allows.
+
+
+
+---------------------------------------------------
+Merging Neighbors => root@DESKTOP-HLH5OMC:/mnt/c/Users/ATM Rahat Hossain/Desktop/Capstone/models# python evaluate_ranking.py \
+  --parquet "../output/tools_gpu_50k.parquet" \
+  --top-k 10 --neighbors 5 --test-fraction 0.2 --seed 42
+Scored neighbor merge: on | User-centered ratings: True
+Cases evaluated: 594
+Hit Rate@10: 0.2862
+MRR@10: 0.0825
+
+When Centered Users:
+  --parquet "../output/tools_gpu_50k.parquet" \
+  --top-k 10 --neighbors 5 --test-fraction 0.2 --seed 42 \
+  --no-center-users
+Scored neighbor merge: on | User-centered ratings: False
+Cases evaluated: 594
+Hit Rate@10: 0.2896
+MRR@10: 0.0797
+------------------------------------------------------
