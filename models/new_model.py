@@ -19,6 +19,11 @@ def main():
         action="store_true",
         help="Disable subtracting each user's mean rating before building the matrix (default: center).",
     )
+    parser.add_argument(
+        "--implicit-matrix",
+        action="store_true",
+        help="Use binary interactions (rating=1) for the sparse matrix; skips user-centering.",
+    )
     parser.add_argument("--output", type=str, default="models/full_recommender.pkl", help="Save path")
     parser.add_argument(
         "--rmm-pool-gb",
@@ -101,7 +106,10 @@ def main():
     df = cudf.concat(dfs)
     del dfs
 
-    if not args.no_center_users:
+    if args.implicit_matrix:
+        print("Implicit feedback matrix (nonzero entries = 1).")
+        df["rating"] = np.float32(1.0)
+    elif not args.no_center_users:
         print("Applying per-user mean-centering on ratings...")
         gmeans = df.groupby("user_idx")["rating"].transform("mean")
         df["rating"] = df["rating"] - gmeans

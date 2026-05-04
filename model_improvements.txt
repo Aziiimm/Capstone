@@ -57,6 +57,13 @@ Suggested implementation order for this repo
 3) Hyperparameter sweep (neighbors, top-k) logged to a small results table.
 4) Optional ALS or hybrid if course scope allows.
 
+DONE in repo (code + improvement_logs/)
+---------------------------------------
+• Iteration 01: scored merge + user centering (neighbor_merge.py, recommenders, new_model).
+• Iteration 02: temporal split + popularity/random baselines; Parquet directory support.
+• Iteration 03: rating-weighted merge row_weights; --implicit-matrix in evaluate_ranking + new_model;
+  recommend(..., history_ratings=...).
+
 
 
 ---------------------------------------------------

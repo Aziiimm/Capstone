@@ -11,12 +11,14 @@ baselines on the same evaluation cases.
 Example:
   cd models
   python evaluate_ranking.py --parquet ../output/tools_gpu_50k.parquet --top-k 10 --seed 42
-  python evaluate_ranking.py --parquet ../output/foo.parquet --split temporal --top-k 10
+  # Path may be a single .parquet file OR a directory of part-*.parquet from Dask/RAPIDS.
+  python evaluate_ranking.py --parquet "../output/foo/part.*.parquet" --split temporal --top-k 10
 """
 from __future__ import annotations
 
 import argparse
 import glob
+import os
 import random
 import sys
 from pathlib import Path
@@ -33,17 +35,35 @@ if str(_MODEL_DIR) not in sys.path:
 from neighbor_merge import merge_knn_scores
 
 
-def _resolve_parquet_paths(pattern: str) -> list[str]:
-    paths = sorted(glob.glob(pattern))
-    if not paths:
-        raise SystemExit(f"No files matched: {pattern}")
-    return paths
+def _expand_to_parquet_files(paths: list[str]) -> list[str]:
+    """Single Parquet file or a directory of part-*.parquet (Dask/cuDF output)."""
+    out: list[str] = []
+    for p in paths:
+        if os.path.isdir(p):
+            parts = sorted(glob.glob(os.path.join(p, "*.parquet")))
+            if not parts:
+                parts = sorted(glob.glob(os.path.join(p, "**", "*.parquet"), recursive=True))
+            if not parts:
+                raise SystemExit(f"No .parquet files under directory: {p}")
+            out.extend(parts)
+        else:
+            out.append(p)
+    return out
 
 
-def _parquet_columns(paths: list[str]) -> list[str]:
-    """Columns present in the first file (for optional timestamp)."""
-    s = pd.read_parquet(paths[0])
-    return list(s.columns)
+def _resolve_parquet_inputs(pattern: str) -> list[str]:
+    matches = sorted(glob.glob(pattern))
+    if not matches and os.path.lexists(pattern):
+        matches = [os.path.normpath(pattern)]
+    if not matches:
+        raise SystemExit(f"No path matched: {pattern!r}")
+    return _expand_to_parquet_files(matches)
+
+
+def _parquet_columns_from_file(path: str) -> list[str]:
+    import pyarrow.parquet as pq
+
+    return list(pq.read_schema(path).names)
 
 
 def _parquet_names(path: str) -> set[str]:
@@ -68,10 +88,15 @@ def _df_to_train_csr(
     item_to_idx: dict,
     n_users: int,
     n_items: int,
+    *,
+    implicit: bool = False,
 ) -> sparse.csr_matrix:
     ui = train_df["reviewerID"].map(user_to_idx)
     ii = train_df["asin"].map(item_to_idx)
-    ratings = train_df["rating"].astype(np.float32).values
+    if implicit:
+        ratings = np.ones(len(train_df), dtype=np.float32)
+    else:
+        ratings = train_df["rating"].astype(np.float32).values
     return sparse.coo_matrix(
         (ratings, (ii.values, ui.values)),
         shape=(n_items, n_users),
@@ -83,12 +108,13 @@ def _recommend_item_indices(
     mat: sparse.csr_matrix,
     history_item_idx: list[int],
     top_k: int,
+    row_weights: np.ndarray | None = None,
 ) -> list[int]:
     if not history_item_idx:
         return []
     q = np.asarray(history_item_idx, dtype=np.int64)
     distances, indices = model.kneighbors(mat[q])
-    return merge_knn_scores(distances, indices, q, top_k)
+    return merge_knn_scores(distances, indices, q, top_k, row_weights=row_weights)
 
 
 def _asins_ordered_temporal(udf: pd.DataFrame) -> list[str]:
@@ -113,12 +139,12 @@ def _accumulate_metrics(
     hits = 0
     rr_sum = 0.0
     n = 0
-    for _, held_asin, train_asins in eval_cases:
+    for uid, held_asin, train_asins in eval_cases:
         hist_idx = [item_to_idx[a] for a in train_asins if a in item_to_idx]
         held_idx = item_to_idx.get(held_asin)
         if held_idx is None or not hist_idx:
             continue
-        rec_idx = recommend_fn(hist_idx, held_idx, train_asins)
+        rec_idx = recommend_fn(uid, hist_idx, held_idx, train_asins)
         n += 1
         if held_idx in rec_idx:
             hits += 1
@@ -167,13 +193,23 @@ def main() -> None:
         action="store_true",
         help="Skip popularity and random baselines (faster).",
     )
+    parser.add_argument(
+        "--implicit-matrix",
+        action="store_true",
+        help="Train kNN on binary interactions (matrix values 1); skips user-centering.",
+    )
+    parser.add_argument(
+        "--no-merge-rating-weights",
+        action="store_true",
+        help="Disable weighting neighbor merge by star rating/5 (default: weights on).",
+    )
     args = parser.parse_args()
 
     rng = random.Random(args.seed)
     np.random.seed(args.seed)
 
-    paths = _resolve_parquet_paths(args.parquet)
-    cols = _parquet_columns(paths)
+    paths = _resolve_parquet_inputs(args.parquet)
+    cols = _parquet_columns_from_file(paths[0])
     read_cols = ["reviewerID", "asin", "rating"]
     if args.split == "temporal":
         if "timestamp" not in cols:
@@ -253,22 +289,47 @@ def main() -> None:
     if train_df.empty:
         raise SystemExit("No training rows after split; lower --min-user-items or check data.")
 
-    if not args.no_center_users:
-        train_df = train_df.copy()
-        train_df["rating"] = train_df.groupby("reviewerID")["rating"].transform(lambda x: x - x.mean())
+    rating_lookup: dict[tuple, float] = {}
+    for _, r in train_df.iterrows():
+        rating_lookup[(r["reviewerID"], r["asin"])] = float(r["rating"])
 
-    mat = _df_to_train_csr(train_df, user_to_idx, item_to_idx, n_users, n_items)
+    train_fit = train_df.copy()
+    if args.implicit_matrix:
+        train_fit["rating"] = 1.0
+    elif not args.no_center_users:
+        train_fit["rating"] = train_fit.groupby("reviewerID")["rating"].transform(lambda x: x - x.mean())
+
+    mat = _df_to_train_csr(
+        train_fit,
+        user_to_idx,
+        item_to_idx,
+        n_users,
+        n_items,
+        implicit=args.implicit_matrix,
+    )
     k_fit = min(max(args.neighbors, 2), max(2, n_items))
     model = NearestNeighbors(n_neighbors=k_fit, metric="cosine")
     model.fit(mat)
 
     # --- Popularity ranking from train only (asin frequency) ---
-    pop_rank_asins = train_df.groupby("asin").size().sort_values(ascending=False).index.tolist()
+    pop_rank_asins = train_fit.groupby("asin").size().sort_values(ascending=False).index.tolist()
 
-    def rec_knn(hist_idx: list[int], _held: int, _train_asins: list[str]) -> list[int]:
-        return _recommend_item_indices(model, mat, hist_idx, args.top_k)
+    use_rw = not args.no_merge_rating_weights
 
-    def rec_popular(hist_idx: list[int], _held: int, train_asins: list[str]) -> list[int]:
+    def rec_knn(uid, hist_idx: list[int], _held: int, train_asins: list[str]) -> list[int]:
+        pairs = [(a, item_to_idx[a]) for a in train_asins if a in item_to_idx]
+        if not pairs:
+            return []
+        hi = [p[1] for p in pairs]
+        rw = None
+        if use_rw:
+            rw = np.array(
+                [np.clip(rating_lookup[(uid, p[0])] / 5.0, 0.0, 1.0) for p in pairs],
+                dtype=np.float64,
+            )
+        return _recommend_item_indices(model, mat, hi, args.top_k, row_weights=rw)
+
+    def rec_popular(_uid, hist_idx: list[int], _held: int, train_asins: list[str]) -> list[int]:
         blocked = {item_to_idx[a] for a in train_asins if a in item_to_idx}
         out: list[int] = []
         for a in pop_rank_asins:
@@ -280,13 +341,17 @@ def main() -> None:
                 break
         return out
 
-    def rec_random(hist_idx: list[int], _held: int, train_asins: list[str]) -> list[int]:
+    def rec_random(_uid, hist_idx: list[int], _held: int, _train_asins: list[str]) -> list[int]:
         blocked = set(hist_idx)
         pool = [i for i in range(n_items) if i not in blocked]
         rng.shuffle(pool)
         return pool[: args.top_k]
 
-    print(f"Split: {args.split} | Scored neighbor merge: on | User-centered train: {not args.no_center_users}")
+    print(
+        f"Split: {args.split} | Implicit matrix: {args.implicit_matrix} | "
+        f"User-centered train: {not args.no_center_users and not args.implicit_matrix} | "
+        f"Merge rating weights: {use_rw}"
+    )
 
     h, rr, n = _accumulate_metrics(eval_cases, item_to_idx, args.top_k, rec_knn)
     if n == 0:
