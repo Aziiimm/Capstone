@@ -1,0 +1,41 @@
+# --- Heavy datasets & derived artifacts ---
+# Amazon-style dumps (often GB-scale)
+dataset/**/*.jsonl
+dataset/**/*.jsonl.gz
+dataset/**/*.csv
+dataset/**/*.csv.gz
+dataset/.cache/
+dataset/raw/
+dataset/review_categories/
+
+# Pipeline outputs (Parquet directories / parts)
+output/
+
+# Serialized models (large)
+models/*.pkl
+
+# Common columnar / binary tables anywhere in repo
+*.parquet
+*.feather
+*.h5
+*.hdf5
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+.venv/
+venv/
+ENV/
+.env
+.env.*
+!.env.example
+
+# --- OS / editor ---
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo

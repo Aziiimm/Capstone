@@ -1,0 +1,58 @@
+Ways to improve the recommender (item–item kNN / Capstone pipeline)
+================================================================
+
+Use this list as a backlog. Say when to implement items and which numbers you want first.
+
+
+DATA & SPLITS
+-------------
+- Use larger / real Amazon slices (full category Parquet) so the model sees more users and items.
+- Tune filter_counts thresholds (min reviews per user / per item) for signal vs catalog size.
+- Use a time-based train/test split (hold out recent interactions via timestamp) instead of random splits only.
+
+
+MATRIX / RATINGS
+----------------
+- User-center or normalize ratings (subtract user mean) before building the sparse matrix.
+- Try implicit feedback: binary “interacted or not” or threshold ratings instead of raw stars.
+
+
+HYPERPARAMETERS
+---------------
+- Tune n_neighbors in NearestNeighbors / new_model.py (too low = noisy; too high = vague).
+- Tune top-k for recommendations separately from graph neighbor count.
+
+
+RECOMMENDATION LOGIC (CODE)
+---------------------------
+- Replace the current “ravel + slice” merge of neighbors from multiple liked items with a scored merge:
+  aggregate neighbors from each history item (e.g. weight by similarity and/or user rating),
+  dedupe items, sort by score, then take top-k.
+
+
+EVALUATION & BASELINES
+----------------------
+- Always evaluate on held-out data with no leakage; compare against baselines on the same split:
+  - Random top-k items
+  - Popularity (most-rated / most-reviewed items)
+- Report Hit Rate@K and MRR@K (already in evaluate_ranking.py); add baseline scripts if missing.
+
+
+STRONGER MODELS (OPTIONAL / LARGER SCOPE)
+----------------------------------------
+- Matrix factorization (e.g. ALS / implicit ALS) on the same sparse matrix.
+- Hybrid: collaborative filtering + content (titles/reviews: TF-IDF or embeddings).
+
+
+INFRASTRUCTURE
+--------------
+- GPU (RAPIDS): watch VRAM on 6 GB cards — smaller RMM pool, limits, or chunked training.
+- CPU vs GPU: same algorithm should be compared with fair splits and timing, not accuracy alone.
+
+
+Suggested implementation order for this repo
+--------------------------------------------
+1) Better neighbor merging + optional user-centering (biggest bang for kNN without new libraries).
+2) Temporal split option in evaluate_ranking.py + popularity/random baselines.
+3) Hyperparameter sweep (neighbors, top-k) logged to a small results table.
+4) Optional ALS or hybrid if course scope allows.

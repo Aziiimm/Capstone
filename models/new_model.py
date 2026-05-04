@@ -1,4 +1,5 @@
 import cudf
+import numpy as np
 import rmm
 import pickle
 import os
@@ -14,12 +15,24 @@ def main():
     parser.add_argument("--path", type=str, required=True, help="Path with wildcard (e.g., 'output/*.parquet')")
     parser.add_argument("--neighbors", type=int, default=5, help="Number of neighbors for the model")
     parser.add_argument("--output", type=str, default="models/full_recommender.pkl", help="Save path")
+    parser.add_argument(
+        "--rmm-pool-gb",
+        type=float,
+        default=None,
+        help="RMM initial pool in GiB (default 2.5, or env RMM_POOL_GB). Keep below VRAM.",
+    )
     args = parser.parse_args()
 
+    pool_gb = args.rmm_pool_gb
+    if pool_gb is None:
+        env = os.environ.get("RMM_POOL_GB")
+        pool_gb = float(env) if env is not None else 2.5
+    initial = int(pool_gb * (1024**3))
+    print(f"RMM pool: {pool_gb} GiB")
     rmm.reinitialize(
         pool_allocator=True,
-        initial_pool_size=int(20e9), 
-        managed_memory=True
+        initial_pool_size=initial,
+        managed_memory=True,
     )
 
     print(f"Resolving path: {args.path}")
@@ -49,12 +62,18 @@ def main():
         
         del temp_df # Clear GPU memory for next file
 
-    # Combine and get global unique codes
-    global_user_map = cudf.concat(all_reviewers).unique().reset_index(drop=True)
-    global_user_map['user_idx'] = global_user_map.index
-    
-    global_item_map = cudf.concat(all_asins).unique().reset_index(drop=True)
-    global_item_map['item_idx'] = global_item_map.index
+    # Combine and get global unique codes (must be DataFrames for merge + idx columns)
+    user_ids = cudf.concat(all_reviewers).unique().reset_index(drop=True)
+    global_user_map = cudf.DataFrame({"reviewerID": user_ids})
+    global_user_map["user_idx"] = cudf.Series(
+        np.arange(len(global_user_map), dtype=np.int64)
+    )
+
+    item_ids = cudf.concat(all_asins).unique().reset_index(drop=True)
+    global_item_map = cudf.DataFrame({"asin": item_ids})
+    global_item_map["item_idx"] = cudf.Series(
+        np.arange(len(global_item_map), dtype=np.int64)
+    )
 
     print(f"Found {len(global_user_map):,} unique users and {len(global_item_map):,} unique items.")
 

@@ -1,0 +1,23 @@
+# GPU path: RAPIDS / cuML — NOT installable with plain `pip install` on PyPI for most setups.
+#
+# Before using this file:
+# 1. Use Python 3.10–3.12 (RAPIDS does not support 3.13 yet as of early 2026).
+# 2. Follow the official installer: https://docs.rapids.ai/install/
+#    Typical options:
+#    - conda/mamba: conda create -n rapids -c rapidsai -c conda-forge -c nvidia \
+#        rapids=26.02 python=3.12 cuda-version=12.8
+#    - Or use the pip wheels flow documented for your CUDA version on the same page.
+#
+# The pins below match this project's original stack; only use them inside an environment
+# where NVIDIA documents support (conda env or RAPIDS Docker image).
+
+cudf==26.2.1
+dask-cudf==26.2.1
+dask-cuda==26.2.0
+rmm==26.2.0
+pylibcudf==26.2.1
+cuda-python==13.1.1
+rapids-dask-dependency==26.2.0a0
+
+# cuml (used by models/new_model.py) is included in the conda `rapids` metapackage.
+# If you use pip wheels from docs.rapids.ai, install the matching cuml-* wheel for your CUDA.

@@ -1,6 +1,6 @@
 """
 Orchestrator: load -> filter -> to_parquet.
-Updated to allocate 7GB of VRAM for the RMM pool.
+GPU runs optionally preconfigure RMM; pool size must fit in VRAM (see --rmm-pool-gb).
 """
 from __future__ import annotations
 
@@ -8,7 +8,6 @@ import argparse
 import json
 import os
 import time
-import cudf
 
 # RAPIDS imports for memory management
 try:
@@ -61,14 +60,27 @@ def main() -> None:
         default=None,
         help="Optional: write stage timings (seconds) to this JSON file for comparison across runs.",
     )
+    parser.add_argument(
+        "--rmm-pool-gb",
+        type=float,
+        default=None,
+        help="With --gpu: RMM initial pool in GiB. Default 2.5, or set env RMM_POOL_GB. "
+        "Must be below your free VRAM (e.g. 2–3 for 6 GiB GPUs).",
+    )
     args = parser.parse_args()
 
     if args.gpu and HAS_RMM:
-            rmm.reinitialize(
-                pool_allocator=True,
-                initial_pool_size=int(8e9),  # Explicitly cast to int
-                managed_memory=True,
-            )
+        pool_gb = args.rmm_pool_gb
+        if pool_gb is None:
+            env = os.environ.get("RMM_POOL_GB")
+            pool_gb = float(env) if env is not None else 2.5
+        initial = int(pool_gb * (1024**3))
+        print(f"RMM pool: {pool_gb} GiB ({initial} bytes)")
+        rmm.reinitialize(
+            pool_allocator=True,
+            initial_pool_size=initial,
+            managed_memory=True,
+        )
 
     os.makedirs(os.path.dirname(args.output) or ".", exist_ok=True)
     backend = "gpu" if args.gpu else "cpu"
