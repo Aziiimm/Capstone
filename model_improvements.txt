@@ -63,6 +63,8 @@ DONE in repo (code + improvement_logs/)
 • Iteration 02: temporal split + popularity/random baselines; Parquet directory support.
 • Iteration 03: rating-weighted merge row_weights; --implicit-matrix in evaluate_ranking + new_model;
   recommend(..., history_ratings=...).
+• Iteration 04: BM25 matrix reweighting (--bm25-weighting); new TruncatedSVD model
+  (--model svd --svd-components N) inside evaluate_ranking.py. Composes with BM25.
 
 
 

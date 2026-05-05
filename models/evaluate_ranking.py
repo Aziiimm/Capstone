@@ -26,6 +26,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 from scipy import sparse
+from sklearn.decomposition import TruncatedSVD
 from sklearn.neighbors import NearestNeighbors
 
 _MODEL_DIR = Path(__file__).resolve().parent
@@ -101,6 +102,30 @@ def _df_to_train_csr(
         (ratings, (ii.values, ui.values)),
         shape=(n_items, n_users),
     ).tocsr()
+
+
+def _bm25_weight_csr(mat: sparse.csr_matrix, k1: float = 100.0, b: float = 0.8) -> sparse.csr_matrix:
+    """BM25 reweighting (rows=items, cols=users) — same idea as implicit.bm25_weight.
+
+    Active users (high column nnz) get less idf weight; long item rows get
+    saturated by the (k1, b) length normalization. Cosine kNN over this matrix
+    typically beats raw counts on sparse implicit feedback.
+    """
+    if mat.nnz == 0:
+        return mat.copy()
+    m = mat.tocsr().astype(np.float64)
+    n_rows, _ = m.shape
+    col_nnz = np.asarray((m != 0).sum(axis=0)).flatten().astype(np.float64)
+    idf = np.log((n_rows - col_nnz + 0.5) / (col_nnz + 0.5) + 1.0)
+    row_sums = np.asarray(m.sum(axis=1)).flatten()
+    avg_row = float(row_sums.mean()) if row_sums.size else 1.0
+    if avg_row <= 0.0:
+        avg_row = 1.0
+    coo = m.tocoo()
+    rows, cols, vals = coo.row, coo.col, coo.data
+    norm = row_sums[rows] / avg_row
+    new_vals = idf[cols] * ((k1 + 1.0) * vals) / (vals + k1 * (1.0 - b + b * norm))
+    return sparse.coo_matrix((new_vals, (rows, cols)), shape=m.shape).tocsr().astype(np.float32)
 
 
 def _recommend_item_indices(
@@ -199,11 +224,35 @@ def main() -> None:
         help="Train kNN on binary interactions (matrix values 1); skips user-centering.",
     )
     parser.add_argument(
-        "--no-merge-rating-weights",
+        "--rating-weighted-merge",
         action="store_true",
-        help="Disable weighting neighbor merge by star rating/5 (default: weights on).",
+        help="Weight each history row in scored merge by star rating/5 (often helps; try on your data).",
+    )
+    parser.add_argument(
+        "--bm25-weighting",
+        action="store_true",
+        help="Reweight item-user matrix with BM25 before fitting kNN. Implies --implicit-matrix.",
+    )
+    parser.add_argument("--bm25-k1", type=float, default=100.0, help="BM25 saturation (default 100).")
+    parser.add_argument("--bm25-b", type=float, default=0.8, help="BM25 length normalization (default 0.8).")
+    parser.add_argument(
+        "--model",
+        choices=("knn", "svd"),
+        default="knn",
+        help="knn: item–item cosine kNN (default). svd: TruncatedSVD latent factors (item × user).",
+    )
+    parser.add_argument(
+        "--svd-components",
+        type=int,
+        default=64,
+        help="Latent dimension for --model svd (default 64; will be clipped to matrix size).",
     )
     args = parser.parse_args()
+
+    if args.bm25_weighting:
+        # BM25 expects nonnegative values; force implicit + skip centering.
+        args.implicit_matrix = True
+        args.no_center_users = True
 
     rng = random.Random(args.seed)
     np.random.seed(args.seed)
@@ -307,14 +356,28 @@ def main() -> None:
         n_items,
         implicit=args.implicit_matrix,
     )
-    k_fit = min(max(args.neighbors, 2), max(2, n_items))
-    model = NearestNeighbors(n_neighbors=k_fit, metric="cosine")
-    model.fit(mat)
+    if args.bm25_weighting:
+        mat = _bm25_weight_csr(mat, k1=args.bm25_k1, b=args.bm25_b)
+
+    if args.model == "knn":
+        k_fit = min(max(args.neighbors, 2), max(2, n_items))
+        model = NearestNeighbors(n_neighbors=k_fit, metric="cosine")
+        model.fit(mat)
+        item_factors = None
+    else:
+        max_components = max(1, min(mat.shape) - 1)
+        comps = max(1, min(args.svd_components, max_components))
+        svd = TruncatedSVD(n_components=comps, random_state=args.seed)
+        item_factors = svd.fit_transform(mat).astype(np.float64)
+        norms = np.linalg.norm(item_factors, axis=1)
+        norms[norms == 0.0] = 1.0
+        item_factors = item_factors / norms[:, None]
+        model = None
 
     # --- Popularity ranking from train only (asin frequency) ---
     pop_rank_asins = train_fit.groupby("asin").size().sort_values(ascending=False).index.tolist()
 
-    use_rw = not args.no_merge_rating_weights
+    use_rw = args.rating_weighted_merge
 
     def rec_knn(uid, hist_idx: list[int], _held: int, train_asins: list[str]) -> list[int]:
         pairs = [(a, item_to_idx[a]) for a in train_asins if a in item_to_idx]
@@ -328,6 +391,24 @@ def main() -> None:
                 dtype=np.float64,
             )
         return _recommend_item_indices(model, mat, hi, args.top_k, row_weights=rw)
+
+    def rec_svd(_uid, hist_idx: list[int], _held: int, train_asins: list[str]) -> list[int]:
+        if item_factors is None or not hist_idx:
+            return []
+        blocked = {item_to_idx[a] for a in train_asins if a in item_to_idx}
+        u = item_factors[hist_idx].mean(axis=0)
+        un = np.linalg.norm(u)
+        if un == 0.0:
+            return []
+        u = u / un
+        scores = item_factors @ u
+        if blocked:
+            scores[list(blocked)] = -np.inf
+        k = min(args.top_k, scores.size - 1)
+        if k <= 0:
+            return []
+        top = np.argpartition(-scores, k - 1)[:k]
+        return top[np.argsort(-scores[top])].tolist()
 
     def rec_popular(_uid, hist_idx: list[int], _held: int, train_asins: list[str]) -> list[int]:
         blocked = {item_to_idx[a] for a in train_asins if a in item_to_idx}
@@ -348,16 +429,20 @@ def main() -> None:
         return pool[: args.top_k]
 
     print(
-        f"Split: {args.split} | Implicit matrix: {args.implicit_matrix} | "
+        f"Model: {args.model} | Split: {args.split} | Implicit matrix: {args.implicit_matrix} | "
         f"User-centered train: {not args.no_center_users and not args.implicit_matrix} | "
-        f"Merge rating weights: {use_rw}"
+        f"BM25: {args.bm25_weighting} (k1={args.bm25_k1}, b={args.bm25_b}) | "
+        f"Rating-weighted merge: {use_rw}"
     )
 
-    h, rr, n = _accumulate_metrics(eval_cases, item_to_idx, args.top_k, rec_knn)
+    rec_main = rec_knn if args.model == "knn" else rec_svd
+    label = "kNN (item–item)" if args.model == "knn" else f"SVD (n_components={item_factors.shape[1]})"
+
+    h, rr, n = _accumulate_metrics(eval_cases, item_to_idx, args.top_k, rec_main)
     if n == 0:
         raise SystemExit("No evaluation cases; increase data or loosen filters.")
 
-    print(f"\n--- kNN (item–item) ---")
+    print(f"\n--- {label} ---")
     print(f"Cases evaluated: {n}")
     print(f"Hit Rate@{args.top_k}: {h / n:.4f}")
     print(f"MRR@{args.top_k}: {rr / n:.4f}")
