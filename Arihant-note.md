@@ -75,7 +75,7 @@ then restart the API server
 
 # SAMPLE CODE TO SEND API REQUEST
 
-# QUERY RESPONSE FORMAT 
+# QUERY RESPONSE FORMAT `
 
 ```
 {
@@ -127,3 +127,72 @@ then restart the API server
 }
 (rapids-25.10) tiwa25@ubuntu1804:~/Capstone$ 
 ```
+
+
+# Restrat the server to bring response time down in a new session 
+
+(rapids-25.10) tiwa25@ubuntu1804:~/Capstone$ fuser -k 8000/tcp
+8000/tcp:            514466
+(rapids-25.10) tiwa25@ubuntu1804:~/Capstone$ MODEL_PATH=models/full_recommender.pkl nohup uvicorn models.server:app --host 0.0.0.0 --port 8000 --workers 1 > logs/server.log 2>&1 &
+[2] 515990
+[1]   Killed                  MODEL_PATH=models/full_recommender.pkl nohup uvicorn models.server:app --host 0.0.0.0 --port 8000 --workers 1 > logs/server.log 2>&1
+(rapids-25.10) tiwa25@ubuntu1804:~/Capstone$ python -c "
+import urllib.request, json, time
+asin_val = 'B07N69T6TM'
+latencies = []
+print('--- Starting Benchmark (20 Requests) ---')
+for i in range(20):
+    start = time.time()
+    data = json.dumps({'asin': asin_val, 'n': 5}).encode()
+    req = urllib.request.Request('http://localhost:8000/recommend', data=data, headers={'Content-Type': 'application/json'})
+    with urllib.request.urlopen(req) as f:
+        res = json.loads(f.read().decode())
+        latencies.append(res['inference_ms'])
+    print(f'Req {i+1}: {res[\"inference_ms\"]:.2f}ms')
+
+avg = sum(latencies) / len(latencies)
+print(f'\n--- RESULTS ---')
+print(f'Cold Start (1st Req): {latencies[0]:.2f}ms')
+print(f'Warm Average (Reqs 2-20): {sum(latencies[1:])/(len(latencies)-1):.2f}ms')
+print(f'Best Time: {min(latencies):.2f}ms')
+"
+
+# 20 mock requests benchmark results
+
+--- Starting Benchmark (20 Requests) ---
+Req 1: 353.62ms
+Req 2: 91.76ms
+Req 3: 91.83ms
+Req 4: 91.75ms
+Req 5: 118.10ms
+Req 6: 90.39ms
+Req 7: 91.44ms
+Req 8: 90.45ms
+Req 9: 90.98ms
+Req 10: 90.68ms
+Req 11: 110.96ms
+Req 12: 90.92ms
+Req 13: 91.38ms
+Req 14: 91.10ms
+Req 15: 91.74ms
+Req 16: 91.88ms
+Req 17: 91.23ms
+Req 18: 92.02ms
+Req 19: 91.74ms
+Req 20: 91.52ms
+
+--- RESULTS ---
+Cold Start (1st Req): 353.62ms
+Warm Average (Reqs 2-20): 93.78ms
+Best Time: 90.39ms
+
+
+
+MODEL_PATH=models/full_recommender.pkl \
+nohup uvicorn models.server:app \
+--host 0.0.0.0 \
+--port 8000 \
+--workers 1 \
+> logs/server.log 2>&1 &
+
+PYTHONPATH=$PYTHONPATH:$(pwd)/models MODEL_PATH=models/full_recommender.pkl nohup uvicorn models.server:app --host 0.0.0.0 --port 8000
