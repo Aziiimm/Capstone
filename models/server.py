@@ -16,6 +16,7 @@ from contextlib import asynccontextmanager
 from typing import List
 
 from fastapi import FastAPI, HTTPException, Query
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 # ---------------------------------------------------------------------------
@@ -52,6 +53,33 @@ app = FastAPI(
     description="GPU-accelerated item-based collaborative filtering.",
     version="1.0.0",
     lifespan=lifespan,
+)
+
+# Allow the Vite dev server (and a couple of common alternates) to call the API
+# from the browser. Override with CORS_ORIGINS="https://foo.com,https://bar.com".
+_default_origins = [
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "http://localhost:8080",
+    "http://127.0.0.1:8080",
+    "http://localhost:8081",
+    "http://127.0.0.1:8081",
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+]
+_origins_env = os.getenv("CORS_ORIGINS", "").strip()
+allowed_origins = (
+    [o.strip() for o in _origins_env.split(",") if o.strip()]
+    if _origins_env
+    else _default_origins
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=allowed_origins,
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["*"],
 )
 
 
