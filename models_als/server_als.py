@@ -1,16 +1,13 @@
 """
-FastAPI inference server for the Amazon GPU Recommender.
+FastAPI server for the implicit ALS recommender.
 
 Start with:
-    uvicorn models.server:app --host 0.0.0.0 --port 8000
-
-Or, from inside /models:
-    MODEL_PATH=full_recommender.pkl uvicorn server:app --host 0.0.0.0 --port 8000
+    MODEL_PATH=models_als/als_recommender \\
+        uvicorn models_als.server_als:app --host 0.0.0.0 --port 8000
 """
 from __future__ import annotations
 
 import os
-import pickle
 import time
 from contextlib import asynccontextmanager
 from typing import List
@@ -19,61 +16,52 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
-# ---------------------------------------------------------------------------
-# Module-level state — set once during lifespan startup, never mutated after.
-# ---------------------------------------------------------------------------
-recommender = None
+from .recommender_als import AmazonRecommenderALS
+
+
+recommender: AmazonRecommenderALS | None = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global recommender
 
-    model_path = os.getenv("MODEL_PATH", "models/full_recommender.pkl")
-    if not os.path.exists(model_path):
+    model_path = os.getenv("MODEL_PATH", "models_als/als_recommender")
+    if not os.path.isdir(model_path):
         raise RuntimeError(
-            f"Model not found at '{model_path}'. "
-            "Set the MODEL_PATH env var or place the .pkl at the default path."
+            f"ALS recommender directory not found at '{model_path}'. "
+            "Train one with `python -m models_als.train_als ...` "
+            "or set MODEL_PATH to a saved recommender directory."
         )
 
-    print(f"Loading recommender from {model_path} ...")
+    print(f"Loading ALS recommender from {model_path} ...")
     t0 = time.perf_counter()
-    with open(model_path, "rb") as f:
-        recommender = pickle.load(f)
-    print(f"Model ready in {time.perf_counter() - t0:.2f}s  "
+    recommender = AmazonRecommenderALS.load(model_path)
+    print(f"Model ready in {time.perf_counter() - t0:.2f}s "
           f"({len(recommender.title_map):,} items)")
 
-    yield  # server runs
-
+    yield
     recommender = None
 
 
 app = FastAPI(
-    title="Amazon Recommender API",
-    description="GPU-accelerated item-based collaborative filtering.",
+    title="Amazon ALS Recommender API",
+    description="Implicit-feedback ALS factorization, CPU/GPU interchangeable.",
     version="1.0.0",
     lifespan=lifespan,
 )
 
-# Allow the Vite dev server (and a couple of common alternates) to call the API
-# from the browser. Override with CORS_ORIGINS="https://foo.com,https://bar.com".
 _default_origins = [
-    "http://localhost:5173",
-    "http://127.0.0.1:5173",
-    "http://localhost:8080",
-    "http://127.0.0.1:8080",
-    "http://localhost:8081",
-    "http://127.0.0.1:8081",
-    "http://localhost:3000",
-    "http://127.0.0.1:3000",
+    "http://localhost:5173", "http://127.0.0.1:5173",
+    "http://localhost:8080", "http://127.0.0.1:8080",
+    "http://localhost:8081", "http://127.0.0.1:8081",
+    "http://localhost:3000", "http://127.0.0.1:3000",
 ]
 _origins_env = os.getenv("CORS_ORIGINS", "").strip()
 allowed_origins = (
     [o.strip() for o in _origins_env.split(",") if o.strip()]
-    if _origins_env
-    else _default_origins
+    if _origins_env else _default_origins
 )
-
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed_origins,
@@ -83,13 +71,9 @@ app.add_middleware(
 )
 
 
-# ---------------------------------------------------------------------------
-# Schemas
-# ---------------------------------------------------------------------------
-
 class RecommendRequest(BaseModel):
     asin: str = Field(..., description="Amazon ASIN of the seed product")
-    top_k: int = Field(10, ge=1, le=100, description="Number of recommendations to return")
+    top_k: int = Field(10, ge=1, le=100)
 
 
 class RecommendItem(BaseModel):
@@ -115,10 +99,6 @@ class SearchResponse(BaseModel):
     results: List[SearchItem]
 
 
-# ---------------------------------------------------------------------------
-# Endpoints
-# ---------------------------------------------------------------------------
-
 @app.get("/health")
 def health():
     return {
@@ -137,13 +117,12 @@ def recommend(req: RecommendRequest):
     if item_idx is None:
         raise HTTPException(
             status_code=404,
-            detail=f"ASIN '{req.asin}' not found in the trained model. "
-                   "Use /search to find valid ASINs.",
+            detail=f"ASIN '{req.asin}' not found in the trained model.",
         )
 
     t0 = time.perf_counter()
     try:
-        raw = recommender.recommend([item_idx], top_k=req.top_k)
+        raw = recommender.similar_items(item_idx, top_k=req.top_k)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Inference failed: {exc}") from exc
     inference_ms = (time.perf_counter() - t0) * 1000
@@ -166,7 +145,6 @@ def search(
 
     q_lower = q.lower()
     matches: List[SearchItem] = []
-
     for idx, title in recommender.title_map.items():
         if q_lower in title.lower():
             matches.append(SearchItem(
