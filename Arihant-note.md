@@ -5,6 +5,8 @@ source /data/anaconda3/etc/profile.d/conda.sh
 conda activate rapids-25.10
 
 
+ssh -J tiwa2147@134.74.112.50 tiwa25@134.74.112.18
+
 # installed verions 
 
 cudf: 25.10.00
@@ -24,7 +26,7 @@ CUDA devices: 1
 python models/new_model.py \
   --path "output/SD/**/*.parquet" \
   --neighbors 10 \
-  --output models/full_recommender.pkl
+  --output models/full_recommender.pkl`
 
 
 # VERIFICATION of asin_to_idx mappings 
@@ -196,3 +198,75 @@ nohup uvicorn models.server:app \
 > logs/server.log 2>&1 &
 
 PYTHONPATH=$PYTHONPATH:$(pwd)/models MODEL_PATH=models/full_recommender.pkl nohup uvicorn models.server:app --host 0.0.0.0 --port 8000
+
+PYTHONPATH=$PYTHONPATH:$(pwd)/models MODEL_PATH=models/full_recommender.pkl uvicorn models.server:app --host 127.0.0.1 --port 8000
+
+MODEL_PATH=models/full_recommender.pkl uvicorn models.server:app --host 127.0.0.1 --port 8000
+
+PYTHONPATH=$PYTHONPATH:$(pwd)/models MODEL_PATH=models/full_recommender.pkl uvicorn models.server:app --host 127.0.0.1 --port 8000
+
+curl -s http://localhost:8000/health
+
+
+watch live logs tail -f ~/Capstone/uvicorn.log 
+
+
+# The SSH tunnel — must run during the demo, but can be backgrounded:
+
+ssh -fN -L 8000:localhost:8000 \
+  -J tiwa2147@134.74.112.50 tiwa25@134.74.112.18
+-f — fork to background after auth
+-N — no remote shell, just the tunnel
+Add keepalives so it doesn't drop mid-presentation:
+
+
+ssh -fN -o ServerAliveInterval=30 -o ServerAliveCountMax=3 \
+  -L 8000:localhost:8000 \
+  -J tiwa2147@134.74.112.50 tiwa25@134.74.112.18
+To find/kill it later: pgrep -f "ssh.*8000:localhost:8000" then kill <pid>.
+
+
+
+# Results from testing using claude evaluate.py 
+
+Loading recommender from models/full_recommender.pkl ...
+  loaded in 4.25s (2,168,296 items)
+Building user → item map (CSR → CSC) ...
+  done in 0.33s (n_users=3,854,104, n_items=2,168,296)
+Eligible users (≥5 ratings): 2,720,193
+Sampling 1,000 users for evaluation.
+
+Evaluating with K ∈ [5, 10, 20], largest_k=20 ...
+  100/1000 users  (14.0s elapsed)
+  200/1000 users  (29.0s elapsed)
+  300/1000 users  (45.2s elapsed)
+  400/1000 users  (61.5s elapsed)
+  500/1000 users  (77.1s elapsed)
+  600/1000 users  (93.3s elapsed)
+  700/1000 users  (108.4s elapsed)
+  800/1000 users  (124.1s elapsed)
+  900/1000 users  (139.4s elapsed)
+  1000/1000 users  (156.1s elapsed)
+
+============================================================
+Evaluated: 1,000 users in 156.1s
+Skipped — inference errors: 0, unknown-asin recs: 0
+------------------------------------------------------------
+   K       Hit@K      NDCG@K
+   5      0.0170      0.0119
+  10      0.0290      0.0158
+  20      0.0440      0.0194
+
+MRR@20: 0.0127
+
+Latency (ms) over 1000 queries:
+  mean   =   156.03
+  median =   126.19
+  p95    =   315.24
+  p99    =   367.78
+  min    =    95.53
+  max    =   398.16
+============================================================
+
+"We started with item-KNN (GPU-only) and SVD (CPU-only, per-category). Both showed weaknesses: KNN gave incoherent recommendations, and SVD's 0.97 NDCG turned out to be evaluation contamination — proper held-out eval gave ~0.06. We switched to implicit ALS, which has matched CPU and GPU implementations in the same library, trained on all categories combined. Same algorithm, same hyperparameters, both backends. Held-out Hit@10 went from ~3% to ~12%, and the GPU trained ~20× faster than CPU on identical data."
+
