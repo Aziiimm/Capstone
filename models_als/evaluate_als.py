@@ -79,6 +79,9 @@ def main() -> None:
         df = df[df["rating"] >= args.min_rating]
         print(f"After rating >= {args.min_rating}: {len(df):,}")
 
+    # Reset index so positional indexing into holdout_mask aligns with idxmax results.
+    df = df.reset_index(drop=True)
+
     user_codes, user_index = pd.factorize(df["reviewerID"], sort=False)
     item_codes, item_index = pd.factorize(df["asin"], sort=False)
     df = df.assign(
