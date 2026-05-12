@@ -69,11 +69,10 @@ def main() -> None:
         frames.append(pd.read_parquet(p, columns=["reviewerID", "asin", "rating", "timestamp"]))
     df = pd.concat(frames, ignore_index=True)
     df["rating"] = pd.to_numeric(df["rating"], errors="coerce")
-    df["timestamp"] = pd.to_numeric(df["timestamp"], errors="coerce")
     before = len(df)
     df = df.dropna(subset=["rating", "timestamp"])
     if len(df) != before:
-        print(f"  dropped {before - len(df):,} rows with non-numeric rating/timestamp")
+        print(f"  dropped {before - len(df):,} rows with bad rating/timestamp")
     print(f"Loaded {len(df):,} interactions in {time.perf_counter() - t0:.2f}s")
 
     if args.min_rating > 0:
