@@ -89,17 +89,20 @@ def main() -> None:
     print(f"n_users={n_users:,}  n_items={n_items:,}")
 
     t0 = time.perf_counter()
-    df = df.sort_values(["user_idx", "timestamp"], kind="stable")
-    last_idx = df.groupby("user_idx").tail(1).index
-    user_counts = df.groupby("user_idx").size()
+    # idxmax: O(n) scan; avoids the full sort that was the bottleneck on 31M rows.
+    print("  finding most-recent interaction per user ...")
+    last_idx = df.groupby("user_idx", sort=False)["timestamp"].idxmax().to_numpy()
+    user_counts = df.groupby("user_idx", sort=False).size()
     eligible_users = set(user_counts[user_counts >= args.min_history].index.tolist())
+    print(f"  ({time.perf_counter() - t0:.2f}s)  eligible users: {len(eligible_users):,}")
 
-    holdout_mask = df.index.isin(last_idx)
+    holdout_mask = np.zeros(len(df), dtype=bool)
+    holdout_mask[last_idx] = True
     df_train = df[~holdout_mask]
     df_holdout = df[holdout_mask]
     df_holdout = df_holdout[df_holdout["user_idx"].isin(eligible_users)]
     print(f"Train rows: {len(df_train):,}  Holdout users: {len(df_holdout):,}  "
-          f"({time.perf_counter() - t0:.2f}s to split)")
+          f"({time.perf_counter() - t0:.2f}s total to split)")
 
     confidence = (1.0 + args.alpha * df_train["rating"].to_numpy(dtype=np.float32)).astype(np.float32)
     user_item = sp.csr_matrix(
