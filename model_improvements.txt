@@ -65,7 +65,64 @@ DONE in repo (code + improvement_logs/)
   recommend(..., history_ratings=...).
 • Iteration 04: BM25 matrix reweighting (--bm25-weighting); new TruncatedSVD model
   (--model svd --svd-components N) inside evaluate_ranking.py. Composes with BM25.
+• Iteration 05: automated sweep (models/sweep_ranking.py → output/sweep_results.csv).
+  25 configs × 4 datasets; best model differs by dataset (see improvement_logs/iteration_05_sweep.md).
+• Iteration 06: ALS (implicit), kNN+SVD ensemble, popularity prior, query-neighbors,
+  min-history-rating, recency decay (ranking_models.py + evaluate_ranking.py).
+  Tools best: 32.83% Hit@10 ensemble temporal (see improvement_logs/iteration_06_als_ensemble.md).
+• Iteration 07: extended sweep v2 → output/sweep_results_v2.csv (see improvement_logs/iteration_07_sweep_v2.md).
+• Iteration 08: content TF-IDF hybrid (content_hybrid.py), 3-model stack, NMF, knn metric,
+  ALS confidence alpha; sweep_iteration08.py → output/sweep_iteration08.csv.
+• Iteration 09: SVD-96 temporal best on dev_tools (33.00% Hit@10); content 20% helps
+  industrial/sample slightly; stack does not beat ensemble on Tools.
+  See improvement_logs/iteration_08_content_stack.md, iteration_09_svd_content_tune.md.
 
+
+Iteration 05 sweep — best config per dataset (Hit Rate@10, seed=42, test_frac=0.2)
+---------------------------------------------------------------------------------
+  tools_gpu_50k / dev_tools (594 cases):
+    BEST: --split temporal --bm25-weighting --rating-weighted-merge --neighbors 10
+    Hit@10 = 0.3081  MRR = 0.0865  (vs default kNN random 0.2862 / 0.0825)
+    Baselines (same temporal split): popularity 0.2997, random 0.2744
+
+  industrial_dev_50k (168 cases, sparse):
+    BEST: --bm25-weighting --rating-weighted-merge --neighbors 10  (random split)
+    Hit@10 = 0.0536  MRR = 0.0130
+    SVD-64 also competitive (0.0476); plain kNN default only 0.0179
+
+  sample_clean (168 cases):
+    BEST: --model svd --svd-components 64  (random split)
+    Hit@10 = 0.0833  MRR = 0.0250
+    kNN default 0.0476 — latent factors win on this slice
+
+Takeaway: no single model wins everywhere. Use temporal+BM25+kNN for Tools;
+try SVD on denser/clean slices; industrial needs more data or ALS/hybrid next.
+
+Re-run sweeps:
+  cd models && py -3 sweep_ranking.py
+  cd models && py -3 sweep_ranking.py --out ../output/sweep_results_v2.csv
+
+Iteration 09 — current best per dataset (Hit Rate@10)
+-----------------------------------------------------
+  tools_gpu_50k (594 cases):
+    Hit@10 champion: ensemble temporal BM25+RW w=0.35  →  0.3283  (MRR 0.0917)
+    MRR champion:    SVD temporal BM25+RW (96 comps)   →  0.3283 hit, MRR 0.0968
+
+  dev_tools (594 cases) — NEW overall hit high:
+    --split temporal --model svd --svd-components 96
+    --bm25-weighting --rating-weighted-merge --neighbors 10
+    Hit@10 = 0.3300  MRR = 0.0971
+
+  industrial_dev_50k (168 cases):
+    --model als --bm25-weighting  (random split)
+    Hit@10 = 0.0655
+
+  sample_clean (168 cases):
+    --model svd --svd-components 64  (random split)
+    Hit@10 = 0.0833
+
+Full iteration write-ups: improvement_logs/
+Quick iter08 sweep:  cd models && py -3 sweep_iteration08.py
 
 
 ---------------------------------------------------
